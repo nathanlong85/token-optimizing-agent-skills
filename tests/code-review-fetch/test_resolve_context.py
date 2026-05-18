@@ -8,7 +8,7 @@ import unittest
 from contextlib import redirect_stderr
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../skills/code-review-fetch/scripts"))
 
 from fetch import resolve_context
 

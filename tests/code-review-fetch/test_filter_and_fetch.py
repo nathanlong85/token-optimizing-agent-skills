@@ -5,7 +5,7 @@ import os
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 from unittest.mock import patch, call
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../skills/code-review-fetch/scripts"))
 
 import fetch
 
