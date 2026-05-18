@@ -59,8 +59,8 @@
 
 ## 10. Manual verification
 
-- [ ] 10.1 Symlink repo into `~/.agents/skills/` and confirm skill is available in Cursor or Gemini CLI
-- [ ] 10.2 Run `scripts/fetch.py <real-pr> --host github.example.com` against a known CodeRabbit-reviewed PR; confirm prompt block extraction and cache write
-- [ ] 10.3 Re-run the same command; confirm `[No new reviews since last run.]`
-- [ ] 10.4 Run against a human-only review PR; confirm grouped inline comments output and that "LGTM" reviews are suppressed
-- [ ] 10.5 Run with `--clear`; confirm cache file is deleted and reviews re-emerge
+- [x] 10.1 Symlink repo into `~/.agents/skills/` and confirm skill is available in Cursor or Gemini CLI
+- [x] 10.2 Run `scripts/fetch.py <real-pr> --host github.example.com` against a known CodeRabbit-reviewed PR; confirm prompt block extraction and cache write
+- [x] 10.3 Re-run the same command; confirm `[No new reviews since last run.]`
+- [x] 10.4 Run against a human-only review PR; confirm grouped inline comments output and that "LGTM" reviews are suppressed
+- [x] 10.5 Run with `--clear`; confirm cache file is deleted and reviews re-emerge
