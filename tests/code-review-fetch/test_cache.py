@@ -4,7 +4,7 @@ import tempfile
 import sys
 import os
 from pathlib import Path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../skills/code-review-fetch/scripts"))
 
 import fetch
 

@@ -2,7 +2,7 @@ import io
 import sys
 import os
 import unittest
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../skills/code-review-fetch/scripts"))
 
 from fetch import _format_date, render_human_review, group_inline_comments
 

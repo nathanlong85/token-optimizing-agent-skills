@@ -1,94 +1,74 @@
-# code-review-fetch
+# Token-Optimizing Agent Skills
 
-Fetch GitHub PR review comments in a compact, token-efficient format for use in AI coding sessions.
+A repository for custom token-optimizing skills designed for AI agents. This repo holds reusable, production-ready skills that reduce token overhead for common agent operations.
 
-**Problem**: fetching reviews via the GitHub API returns 10–35KB of JSON noise per PR. Only a tiny fraction is actionable. This tool extracts just the actionable content:
+## Repository Structure
 
-- **CodeRabbit reviews** (`svc-coderabbit[bot]`): extracts the "Prompt for all review comments with AI agents" block directly from the review body — no inline-comment fetch required.
-- **Human reviews**: fetches inline comments once, groups by review round, renders as `In \`path\`: Around line N: <body>`.
+```
+token-optimizing-agent-skills/
+├── skills/
+│   └── <skill-name>/
+│       ├── README.md              # Skill documentation
+│       ├── SKILL.md               # Skill manifest
+│       ├── scripts/               # Implementation
+│       └── ...
+├── tests/
+│   └── <skill-name>/              # Tests for that skill
+│       ├── __init__.py
+│       ├── test_*.py
+│       └── ...
+├── openspec/
+│   ├── specs/                     # Main specification docs
+│   └── changes/archive/           # Archived change documentation
+└── CLAUDE.md                       # Project guidance for Claude Code
+```
 
-Deduplicates by review round using a local cache, so repeat invocations only surface new feedback.
+## Adding a New Skill
 
-## Requirements
+1. **Create skill directory**:
+   ```
+   skills/<skill-name>/
+   ```
 
-- Python 3.9+ (stdlib only — no `pip install`)
-- [`gh` CLI](https://cli.github.com/) authenticated for your GitHub host
+2. **Create skill files**:
+   - `SKILL.md` — Manifest describing the skill (name, description, commands, arguments, output)
+   - `README.md` — User-facing documentation with setup, usage, and examples
+   - `scripts/` — Implementation code
 
-## Install
+3. **Create tests**:
+   ```
+   tests/<skill-name>/
+   ├── __init__.py
+   ├── test_*.py
+   └── ...
+   ```
+   Tests should import from the skill using relative paths:
+   ```python
+   sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../skills/<skill-name>/scripts"))
+   ```
 
-This repo is an [Agent Skill](https://agentskills.io). Symlink or copy the repo root into your tool's skills directory.
+4. **Optional: Document design decisions**:
+   Use OpenSpec artifacts in `openspec/changes/` for design docs, proposals, and task tracking during development.
 
-### Claude Code
+## Skills
 
+### code-review-fetch
+Fetch GitHub PR review comments in a compact, token-efficient format. Extracts CodeRabbit's AI prompt blocks and synthesizes human inline comments into a uniform format, deduplicating across review rounds using local caching.
+
+See `skills/code-review-fetch/README.md` for details.
+
+## Testing
+
+Run tests for a specific skill:
 ```bash
-ln -s /path/to/code-review-fetch ~/.claude/skills/code-review-fetch
+pytest tests/<skill-name>/
 ```
 
-### Cursor and Gemini CLI
-
+Run all tests:
 ```bash
-ln -s /path/to/code-review-fetch ~/.agents/skills/code-review-fetch
+pytest tests/
 ```
 
-### Project scope (current repo only)
+## License
 
-```bash
-# Claude Code
-ln -s /path/to/code-review-fetch .claude/skills/code-review-fetch
-
-# Cursor / Gemini CLI
-ln -s /path/to/code-review-fetch .agents/skills/code-review-fetch
-```
-
-## Usage
-
-After installing, invoke the skill from your AI tool:
-
-```
-/code-review-fetch <pr_number> [--repo owner/repo] [--host github.example.com] [--clear]
-```
-
-| Flag | Description |
-|------|-------------|
-| `<pr_number>` | Pull request number (required) |
-| `--repo` | `owner/repo` — inferred from git remote when omitted |
-| `--host` | GitHub hostname — inferred from git remote when omitted |
-| `--clear` | Delete cached review IDs for this PR, re-fetching all reviews |
-
-## Supported GitHub hosts
-
-- `github.com`
-- GitHub Enterprise instances (e.g. `github.yourcompany.com`) via `GH_HOST`
-
-The host is inferred automatically from your git remote. Pass `--host` to override.
-
-## Troubleshooting
-
-**`'gh' not found`** — install the [GitHub CLI](https://cli.github.com/).
-
-**`gh repo view` fails** — authenticate: `gh auth login --hostname <host>`. Verify with `gh auth status --hostname <host>`.
-
-**`[No new reviews since last run.]` but you expect reviews** — run with `--clear` to reset the cache for this PR.
-
-## Replying to a specific thread
-
-To reply to a CodeRabbit inline comment thread (only when you disagree or won't fix), fetch comment IDs on demand:
-
-```bash
-GH_HOST=<host> gh api repos/<owner>/<repo>/pulls/<pr>/comments \
-  --jq '.[] | {id, path, line, body: .body[:100]}'
-```
-
-## Cache location
-
-`~/.cache/code-review-fetch/<host>_<owner>_<repo>_<pr>.json`
-
-`--clear` deletes only the target PR's cache file.
-
-## Tests
-
-```bash
-python3 -m unittest discover tests
-```
-
-No third-party dependencies. Uses stdlib `unittest`.
+GPL-3.0 — See LICENSE file.
