@@ -1,2 +1,19 @@
 # Added by code-review-graph
 .code-review-graph/
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# AI agents
+.claude/
+.cursor/
+.gemini/
+
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursorrules
+
+.mcp.json
