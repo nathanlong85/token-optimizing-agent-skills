@@ -4,7 +4,7 @@
 TBD - created by archiving change code-review-fetch. Update Purpose after archive.
 ## Requirements
 ### Requirement: Argument and context resolution
-The fetcher SHALL accept a positional PR number and optional `--repo`, `--host`, and `--clear` flags. When `--repo` or `--host` is omitted, the fetcher MUST infer the missing values from `gh repo view --json owner,name,url` invoked in the current working directory.
+The fetcher SHALL accept a positional PR number and optional `--repo`, `--host`, `--clear`, and `--compact` flags. When `--repo` or `--host` is omitted, the fetcher MUST infer the missing values from `gh repo view --json owner,name,url` invoked in the current working directory.
 
 #### Scenario: PR number only, inside a git checkout
 - **WHEN** the user runs `scripts/fetch.py 1234` inside a repo whose `origin` points at `git@github.example.com:acme/widgets.git`
@@ -79,13 +79,17 @@ The fetcher SHALL persist the set of emitted review IDs per PR in a JSON file at
 - **THEN** the PR 1234 cache file is deleted before fetching, but the PR 5678 cache file is untouched
 
 ### Requirement: Output format
-The fetcher SHALL write all output to stdout. Each emitted review MUST be introduced by a header line of the form `=== CodeRabbit Review #<id> (<YYYY-MM-DD>) ===` for CodeRabbit reviews or `=== Review by <login> #<id> (<YYYY-MM-DD>) ===` for human reviews, followed by the extracted content, followed by a blank line. After emitting all new reviews, the fetcher MUST print a single trailing summary line: `[<N> new review(s). Cache updated.]` or `[No new reviews since last run.]` when nothing was emitted.
+The fetcher SHALL write all review content to stdout. Each emitted review MUST be introduced by a header line of the form `=== CodeRabbit Review ===` for CodeRabbit reviews or `=== Review by <login> ===` for human reviews, followed by the extracted content, followed by a blank line. After processing, the fetcher MUST print a single status line to **stderr** (not stdout): `[<N> new review(s). Cache updated.]` or `[No new reviews since last run.]` when nothing was emitted.
 
 #### Scenario: Mixed CodeRabbit and human output
-- **WHEN** a run emits one CodeRabbit review (`id=10`, `2026-05-14`) and one human review by `alice` (`id=11`, `2026-05-14`)
-- **THEN** stdout contains, in order: the CodeRabbit header `=== CodeRabbit Review #10 (2026-05-14) ===`, the extracted prompt block, a blank line, `=== Review by alice #11 (2026-05-14) ===`, the synthesized inline comments, a blank line, and the trailing `[2 new review(s). Cache updated.]`
+- **WHEN** a run emits one CodeRabbit review and one human review by `alice`
+- **THEN** stdout contains, in order: `=== CodeRabbit Review ===`, the extracted prompt block, a blank line, `=== Review by alice ===`, the synthesized inline comments, a blank line; and stderr contains `[2 new review(s). Cache updated.]`
 
 #### Scenario: Nothing new to emit
 - **WHEN** every reviewable review is already in the cache
-- **THEN** stdout contains exactly the single line `[No new reviews since last run.]`
+- **THEN** stdout is empty and stderr contains exactly `[No new reviews since last run.]`
+
+#### Scenario: Headers contain no ID or date
+- **WHEN** any review is emitted
+- **THEN** its header line contains neither the review ID nor the submission date
 
