@@ -7,6 +7,7 @@ __pycache__/
 *.pyc
 
 # AI agents
+.agents/
 .claude/
 .cursor/
 .gemini/
@@ -17,3 +18,4 @@ GEMINI.md
 .cursorrules
 
 .mcp.json
+skills-lock.json
