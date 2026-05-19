@@ -23,7 +23,7 @@ skill = Path(skill_path).read_text()
 
 snippet_match = re.search(r"ACTIVATION_SNIPPET='(.*?)'\n\nSNIPPET_MARKER", creg, re.S)
 skill_match = re.search(
-    r"## Activation Snippet\n\n`creg inject <file>` appends the following snippet verbatim\. Agents that read the file will apply the protocol automatically\.\n\n```\n(.*?)\n```",
+    r"## Activation Snippet\n\n`creg inject <file>` appends the following snippet verbatim\. Agents that read the file will apply the protocol automatically\.\n\n```(?:[a-zA-Z0-9_-]+)?\n(.*?)\n```",
     skill,
     re.S,
 )

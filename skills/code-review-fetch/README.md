@@ -5,7 +5,7 @@ Fetch GitHub PR review comments in a compact, token-efficient format for use in 
 **Problem**: fetching reviews via the GitHub API returns 10–35KB of JSON noise per PR. Only a tiny fraction is actionable. This tool extracts just the actionable content:
 
 - **CodeRabbit reviews** (`svc-coderabbit[bot]`): extracts the "Prompt for all review comments with AI agents" block directly from the review body — no inline-comment fetch required.
-- **Human reviews**: fetches inline comments once, groups by review round, renders as `In \`path\`: Around line N: <body>`.
+- **Human reviews**: fetches inline comments once, groups by review round, renders as `In \`path\`: Around line N: [comment_text]`.
 
 Deduplicates by review round using a local cache, so repeat invocations only surface new feedback.
 
@@ -44,16 +44,17 @@ ln -s /path/to/code-review-fetch .agents/skills/code-review-fetch
 
 After installing, invoke the skill from your AI tool:
 
-```
-/code-review-fetch <pr_number> [--repo owner/repo] [--host github.example.com] [--clear]
+```bash
+/code-review-fetch <pr_number> [--repo owner/repo] [--host github.example.com] [--clear] [--compact]
 ```
 
 | Flag | Description |
-|------|-------------|
+| --- | --- |
 | `<pr_number>` | Pull request number (required) |
 | `--repo` | `owner/repo` — inferred from git remote when omitted |
 | `--host` | GitHub hostname — inferred from git remote when omitted |
 | `--clear` | Delete cached review IDs for this PR, re-fetching all reviews |
+| `--compact` | Print reviewer/files summary only (no full comment bodies) |
 
 ## Supported GitHub hosts
 

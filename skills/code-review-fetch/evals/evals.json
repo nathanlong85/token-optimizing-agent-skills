@@ -1,0 +1,35 @@
+{
+  "skill_name": "code-review-fetch",
+  "evals": [
+    {
+      "id": "fetch-new-reviews-default",
+      "prompt": "Pull review feedback for PR 182 in this repo and show only new actionable comments.",
+      "expected_output": "Output shows normalized review sections for new review rounds without dumping raw GitHub API payloads.",
+      "assertions": [
+        "When new reviews exist, stdout includes at least one section heading that starts with === and ends with ===",
+        "Human inline comments are rendered as In `path`: Around line N: [comment_text]",
+        "Stdout does not contain raw API object keys such as \"pull_request_review_id\" or \"submitted_at\""
+      ]
+    },
+    {
+      "id": "fetch-new-reviews-compact",
+      "prompt": "Fetch PR 182 review comments with --compact so I can triage quickly.",
+      "expected_output": "Compact output contains reviewer/file summary only and omits full per-review bodies.",
+      "assertions": [
+        "Stdout includes a summary line matching <n> new review(s) — <reviewers>",
+        "Output includes a Files with comments section when inline comments exist",
+        "Compact mode stdout does not include === CodeRabbit Review === or === Review by <login> === blocks"
+      ]
+    },
+    {
+      "id": "repeat-run-dedupes",
+      "prompt": "Run the review fetch twice for the same PR and confirm the second run suppresses already-seen reviews.",
+      "expected_output": "Second run reports no new reviews when no additional review rounds were submitted.",
+      "assertions": [
+        "First run creates a cache file at ~/.cache/code-review-fetch/<host>_<owner>_<repo>_<pr>.json",
+        "Second run writes [No new reviews since last run.] to stderr when review set is unchanged",
+        "Second run does not reprint previously emitted review sections"
+      ]
+    }
+  ]
+}
