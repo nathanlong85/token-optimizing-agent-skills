@@ -30,6 +30,16 @@
         "Retry reasoning references anti_patterns from the matched entry before changing command shape",
         "Retried command shape is based on the matched verified/template entry rather than an unrelated ad hoc command"
       ]
+    },
+    {
+      "id": "reclassify-catch-all-plan",
+      "prompt": "Review command-registry catch-all entries in other.md and propose a reclassification plan.",
+      "expected_output": "Agent returns a dry-run reclassification plan and waits for approval before any move.",
+      "assertions": [
+        "Plan includes proposed topic files, entry IDs, rationale, confidence, leave-in-place entries, and rollback or validation notes",
+        "Without explicit user approval, agent does not execute creg move",
+        "After explicit approval, agent uses creg move for approved entries and runs creg validate"
+      ]
     }
   ]
 }
