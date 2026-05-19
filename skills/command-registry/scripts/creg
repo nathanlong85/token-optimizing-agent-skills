@@ -1,0 +1,775 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SKILL_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Require bash 4.0+ for consistent behavior
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+  echo "creg: requires bash 4.0 or later (found bash ${BASH_VERSION})" >&2
+  echo "On macOS, install via: brew install bash" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Global temp-file registry — safer than per-function RETURN traps, which
+# overwrite the calling function's RETURN trap when set inside nested calls.
+# ---------------------------------------------------------------------------
+_CREG_TMPFILES=()
+_cleanup_tmpfiles() {
+  local f
+  for f in "${_CREG_TMPFILES[@]+"${_CREG_TMPFILES[@]}"}"; do
+    rm -f "$f"
+  done
+}
+trap '_cleanup_tmpfiles' EXIT
+
+creg_mktemp() {
+  local f
+  f=$(mktemp) || die "mktemp failed"
+  _CREG_TMPFILES+=("$f")
+  printf '%s' "$f"
+}
+
+# ---------------------------------------------------------------------------
+# Registry path resolution
+# ---------------------------------------------------------------------------
+
+find_project_registry() {
+  local dir="$PWD"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -d "$dir/.agents/rules/local/command-registry" ]]; then
+      echo "$dir/.agents/rules/local/command-registry"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+find_global_registry() {
+  if [[ -n "${CREG_GLOBAL_PATH:-}" ]]; then
+    echo "$CREG_GLOBAL_PATH"
+  else
+    echo "$HOME/.agents/rules/command-registry"
+  fi
+}
+
+get_registry() {
+  local use_global="${1:-false}"
+  if [[ "$use_global" == "true" ]]; then
+    find_global_registry
+  else
+    local proj
+    if proj=$(find_project_registry 2>/dev/null); then
+      echo "$proj"
+    else
+      echo ".agents/rules/local/command-registry"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+die() { printf 'creg: error: %s\n' "$*" >&2; exit 1; }
+info() { printf '%s\n' "$*"; }
+
+count_entries() {
+  local dir="$1"
+  if [[ ! -d "$dir" ]]; then echo 0; return; fi
+  local count=0
+  local f
+  for f in "$dir"/*.md; do
+    [[ -f "$f" ]] || continue
+    [[ "$(basename "$f")" == "index.md" ]] && continue
+    local n
+    n=$(grep -c "^## " "$f" 2>/dev/null || true)
+    count=$((count + n))
+  done
+  echo "$count"
+}
+
+# Parse -g/--global from "$@"; sets GLOBAL_FLAG and REMAINING_ARGS
+parse_global_flag() {
+  GLOBAL_FLAG="false"
+  REMAINING_ARGS=()
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "-g" || "$arg" == "--global" ]]; then
+      GLOBAL_FLAG="true"
+    else
+      REMAINING_ARGS+=("$arg")
+    fi
+  done
+}
+
+# Parse --all and -g from "$@"; sets ALL_FLAG, GLOBAL_FLAG, REMAINING_ARGS
+parse_all_flag() {
+  ALL_FLAG="false"
+  GLOBAL_FLAG="false"
+  REMAINING_ARGS=()
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--all" ]]; then
+      ALL_FLAG="true"
+    elif [[ "$arg" == "-g" || "$arg" == "--global" ]]; then
+      GLOBAL_FLAG="true"
+    else
+      REMAINING_ARGS+=("$arg")
+    fi
+  done
+}
+
+# Find topic file containing an id; prints filepath or returns 1
+find_entry_file() {
+  local registry="$1" id="$2"
+  [[ -d "$registry" ]] || return 1
+  local f
+  for f in "$registry"/*.md; do
+    [[ -f "$f" ]] || continue
+    [[ "$(basename "$f")" == "index.md" ]] && continue
+    if grep -q "^## ${id}$" "$f" 2>/dev/null; then
+      echo "$f"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Extract section: from ## id through the line before the next ## (or EOF)
+extract_section() {
+  local file="$1" id="$2"
+  awk "/^## ${id}$/{found=1} found && /^## / && !/^## ${id}$/{exit} found{print}" "$file"
+}
+
+# Remove a ## id section from file (in-place)
+remove_section() {
+  local file="$1" id="$2"
+  local tmp
+  tmp=$(creg_mktemp)
+  awk "
+    /^## ${id}$/ { skip=1; next }
+    skip && /^## / { skip=0 }
+    !skip { print }
+  " "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+# Insert a section block (from a temp file) into $file at the A-Z sorted position
+insert_sorted() {
+  local file="$1"
+  local block_file="$2"
+
+  if [[ ! -s "$file" ]]; then
+    cp "$block_file" "$file"
+    return
+  fi
+
+  local new_id
+  new_id=$(grep "^## " "$block_file" | sed 's/^## //')
+
+  # Find which existing id comes after new_id alphabetically
+  local insert_before=""
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^##\ (.+)$ ]]; then
+      local existing_id="${BASH_REMATCH[1]}"
+      if [[ "$new_id" < "$existing_id" ]]; then
+        insert_before="$existing_id"
+        break
+      fi
+    fi
+  done < "$file"
+
+  if [[ -z "$insert_before" ]]; then
+    { printf '\n'; cat "$block_file"; } >> "$file"
+    return
+  fi
+
+  local tmp
+  tmp=$(creg_mktemp)
+  # Use awk getline to inject block_file before the target heading
+  awk -v before="## ${insert_before}" -v blockfile="$block_file" '
+    $0 == before && !done {
+      while ((getline line < blockfile) > 0) print line
+      close(blockfile)
+      printf "\n"
+      done = 1
+    }
+    { print }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+# Add a row to the routing table in index.md for a new topic
+add_routing_row() {
+  local index="$1" topic="$2" filepath="$3"
+  local filename
+  filename=$(basename "$filepath")
+  # Skip if already present
+  grep -q "$filename" "$index" 2>/dev/null && return 0
+  local tmp
+  tmp=$(creg_mktemp)
+  awk -v row="| ${topic} | ${filename} |" '
+    /^\|---/ && !inserted { print; print row; inserted=1; next }
+    { print }
+  ' "$index" > "$tmp"
+  mv "$tmp" "$index"
+}
+
+# Remove routing table row matching filename
+remove_routing_row() {
+  local index="$1" filename="$2"
+  local tmp
+  tmp=$(creg_mktemp)
+  grep -v "| ${filename} |" "$index" > "$tmp" || true
+  mv "$tmp" "$index"
+}
+
+# ---------------------------------------------------------------------------
+# Canonical activation snippet
+# ---------------------------------------------------------------------------
+
+# shellcheck disable=SC2016  # intentional: $CREG_GLOBAL_PATH should not expand here
+ACTIVATION_SNIPPET='## Command Registry
+
+Before running or suggesting any shell command — and before retrying after a failure —
+check command registries (use whichever exist):
+
+1. Project: .agents/rules/local/command-registry/ (if present)
+2. Global: ~/.agents/rules/command-registry/ (or $CREG_GLOBAL_PATH if set)
+Project wins on conflicts. For each registry found:
+  a. Identify the right topic file from index.md routing table.
+  b. Search (grep/rg) for the `## snake_case_id`, tags, or keyword. Read only that section.
+  c. Prefer: exact verified → adapt template → closest intent.
+  d. If retrying after a failure, re-scan `anti_patterns` in the matched entry before changing command shape.
+
+After a command succeeds that is not in the registry: use `creg add` to record it that turn.
+  - Contains project-specific path/host/script → project registry (no -g)
+  - Generic, works across repos → global registry (creg add ... -g)
+  Print one line to the user: `Command registry: added <id>` or `Command registry: updated <id>`.
+
+Extend existing entries. Avoid near-duplicates across topic files.
+Registry wins for command shape. Project rules win for policy.'
+
+SNIPPET_MARKER="## Command Registry"
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+  parse_global_flag "$@"
+  local registry
+  registry=$(get_registry "$GLOBAL_FLAG")
+  if [[ -f "$registry/index.md" ]]; then
+    info "Already initialized: $registry/index.md (no changes made)"
+    return 0
+  fi
+  mkdir -p "$registry"
+  cp "$SKILL_DIR/template/index.md" "$registry/index.md"
+  info "Initialized registry: $registry"
+}
+
+cmd_inject() {
+  [[ $# -eq 0 ]] && die "Usage: creg inject <file...>"
+  local f
+  for f in "$@"; do
+    if [[ -f "$f" ]] && grep -qF "$SNIPPET_MARKER" "$f" 2>/dev/null; then
+      info "$f: already contains activation snippet (no changes)"
+      continue
+    fi
+
+    if [[ "$f" == *.mdc ]]; then
+      if [[ ! -f "$f" ]]; then
+        printf -- '---\nalwaysApply: true\n---\n\n%s\n' "$ACTIVATION_SNIPPET" > "$f"
+      else
+        if grep -q "^---" "$f" 2>/dev/null; then
+          if ! grep -q "alwaysApply" "$f" 2>/dev/null; then
+            local tmp
+            tmp=$(creg_mktemp)
+            awk '/^---$/ && !done { print; print "alwaysApply: true"; done=1; next } { print }' "$f" > "$tmp"
+            mv "$tmp" "$f"
+          fi
+        else
+          local tmp2
+          tmp2=$(creg_mktemp)
+          printf -- '---\nalwaysApply: true\n---\n\n' > "$tmp2"
+          cat "$f" >> "$tmp2"
+          mv "$tmp2" "$f"
+        fi
+        printf '\n%s\n' "$ACTIVATION_SNIPPET" >> "$f"
+      fi
+    else
+      if [[ ! -f "$f" ]]; then
+        printf '%s\n' "$ACTIVATION_SNIPPET" > "$f"
+      else
+        printf '\n%s\n' "$ACTIVATION_SNIPPET" >> "$f"
+      fi
+    fi
+    info "$f: activation snippet added"
+  done
+}
+
+cmd_link() {
+  local target="${1:-}"
+  [[ "$target" == "--cursor" ]] || die "Usage: creg link --cursor"
+
+  local proj_registry
+  proj_registry=$(find_project_registry 2>/dev/null) || die "No project registry found. Run 'creg init' first."
+
+  # Walk up: proj_registry is <root>/.agents/rules/local/command-registry (4 levels)
+  local repo_root
+  repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$proj_registry")")")")
+  local link_dir="$repo_root/.cursor/rules/local"
+  local link_path="$link_dir/command-registry"
+
+  if [[ -L "$link_path" ]]; then
+    info "Symlink already exists: $link_path (no changes)"
+    return 0
+  fi
+
+  mkdir -p "$link_dir"
+  ln -s "$proj_registry" "$link_path"
+  info "Symlink created: $link_path → $proj_registry"
+}
+
+cmd_add() {
+  local topic="${1:-}" id="${2:-}"
+  [[ -n "$topic" ]] || die "Usage: creg add <topic> <id> --intent \"...\" [options]"
+  [[ -n "$id" ]] || die "Usage: creg add <topic> <id> --intent \"...\" [options]"
+  shift 2
+
+  local intent="" tags="" verified="" template=""
+  local -a variants=() anti_patterns=()
+  GLOBAL_FLAG="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --intent)      intent="$2";          shift 2 ;;
+      --tags)        tags="$2";            shift 2 ;;
+      --verified)    verified="$2";        shift 2 ;;
+      --template)    template="$2";        shift 2 ;;
+      --variant)     variants+=("$2");     shift 2 ;;
+      --anti-pattern) anti_patterns+=("$2"); shift 2 ;;
+      -g|--global)   GLOBAL_FLAG="true";   shift ;;
+      *) die "Unknown flag: $1" ;;
+    esac
+  done
+
+  [[ -n "$intent" ]]                            || die "--intent is required"
+  [[ -n "$verified" || -n "$template" ]]        || die "At least one of --verified or --template is required"
+
+  local registry
+  registry=$(get_registry "$GLOBAL_FLAG")
+  [[ -d "$registry" ]] || die "Registry not initialized: $registry. Run 'creg init' first."
+
+  # Dedup check across all topic files
+  local existing_file
+  if existing_file=$(find_entry_file "$registry" "$id" 2>/dev/null); then
+    die "id '${id}' already exists in $(basename "$existing_file"). Use 'creg move' to relocate or extend the existing entry."
+  fi
+
+  local topic_file="$registry/${topic}.md"
+  local is_new_topic="false"
+  [[ -f "$topic_file" ]] || is_new_topic="true"
+
+  # Write block to a temp file (avoids awk -v newline issues)
+  local block_file
+  block_file=$(creg_mktemp)
+
+  {
+    printf '## %s\n\n' "$id"
+    printf 'intent: %s\n' "$intent"
+    [[ -n "$tags" ]]     && printf 'tags: %s\n' "$tags"
+    [[ -n "$verified" ]] && printf 'verified: %s\n' "$verified"
+    [[ -n "$template" ]] && printf 'template: %s\n' "$template"
+    if [[ ${#variants[@]} -gt 0 ]]; then
+      printf 'variants:\n'
+      local v; for v in "${variants[@]}"; do printf -- '- %s\n' "$v"; done
+    fi
+    if [[ ${#anti_patterns[@]} -gt 0 ]]; then
+      printf 'anti_patterns:\n'
+      local ap; for ap in "${anti_patterns[@]}"; do printf -- '- %s\n' "$ap"; done
+    fi
+  } > "$block_file"
+
+  if [[ "$is_new_topic" == "true" ]]; then
+    cp "$block_file" "$topic_file"
+    local index="$registry/index.md"
+    [[ -f "$index" ]] && add_routing_row "$index" "$topic" "$topic_file"
+  else
+    insert_sorted "$topic_file" "$block_file"
+  fi
+
+  info "Command registry: added ${id}"
+}
+
+cmd_move() {
+  parse_global_flag "$@"
+  set -- "${REMAINING_ARGS[@]}"
+  local id="${1:-}" new_topic="${2:-}"
+  [[ -n "$id" ]]        || die "Usage: creg move <id> <new-topic> [-g]"
+  [[ -n "$new_topic" ]] || die "Usage: creg move <id> <new-topic> [-g]"
+
+  local registry
+  registry=$(get_registry "$GLOBAL_FLAG")
+  [[ -d "$registry" ]] || die "Registry not found: $registry"
+
+  local src_file
+  src_file=$(find_entry_file "$registry" "$id") || die "id '${id}' not found in registry: $registry"
+
+  local dst_file="$registry/${new_topic}.md"
+  local is_new_topic="false"
+  [[ -f "$dst_file" ]] || is_new_topic="true"
+
+  # Extract section to temp file
+  local section_file
+  section_file=$(creg_mktemp)
+  extract_section "$src_file" "$id" > "$section_file"
+
+  remove_section "$src_file" "$id"
+
+  if [[ "$is_new_topic" == "true" ]]; then
+    cp "$section_file" "$dst_file"
+    local index="$registry/index.md"
+    [[ -f "$index" ]] && add_routing_row "$index" "$new_topic" "$dst_file"
+  else
+    insert_sorted "$dst_file" "$section_file"
+  fi
+
+  # Delete source if no entries remain
+  local remaining
+  remaining=$(grep -c "^## " "$src_file" 2>/dev/null || true)
+  if [[ "$remaining" -eq 0 ]]; then
+    local src_basename
+    src_basename=$(basename "$src_file")
+    rm "$src_file"
+    local index="$registry/index.md"
+    [[ -f "$index" ]] && remove_routing_row "$index" "$src_basename"
+    info "Deleted empty topic file: $src_basename"
+  fi
+
+  info "Moved '${id}' to ${new_topic}.md"
+}
+
+cmd_search() {
+  parse_all_flag "$@"
+  set -- "${REMAINING_ARGS[@]}"
+  local keyword="${1:-}"
+  [[ -n "$keyword" ]] || die "Usage: creg search <keyword> [-g] [--all]"
+
+  _search_one_registry() {
+    local registry="$1" label="$2"
+    if [[ ! -d "$registry" ]]; then
+      info "[${label}] not present: $registry"
+      return
+    fi
+    local found=0 f
+    for f in "$registry"/*.md; do
+      [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "index.md" ]] && continue
+      if grep -iE "^## .*${keyword}|^tags:.*${keyword}|^intent:.*${keyword}|^verified:.*${keyword}|^template:.*${keyword}" "$f" &>/dev/null; then
+        info "[${label}: $(basename "$f")]"
+        # Collect matching section ids
+        awk -v kw="$keyword" '
+          /^## / { id=$0 }
+          tolower($0) ~ tolower(kw) && id { print "  " id; id="" }
+        ' "$f" | sort -u
+        found=1
+      fi
+    done
+    [[ "$found" -eq 1 ]] || info "[${label}] no matches for '${keyword}'"
+  }
+
+  if [[ "$ALL_FLAG" == "true" ]]; then
+    _search_one_registry "$(get_registry "false")" "project"
+    _search_one_registry "$(get_registry "true")"  "global"
+  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
+    _search_one_registry "$(get_registry "true")" "global"
+  else
+    _search_one_registry "$(get_registry "false")" "project"
+  fi
+}
+
+cmd_show() {
+  parse_all_flag "$@"
+  set -- "${REMAINING_ARGS[@]}"
+  local id="${1:-}"
+  [[ -n "$id" ]] || die "Usage: creg show <id>"
+
+  _show_in_registry() {
+    local registry="$1"
+    [[ -d "$registry" ]] || return 1
+    local file
+    if file=$(find_entry_file "$registry" "$id"); then
+      extract_section "$file" "$id"
+      return 0
+    fi
+    return 1
+  }
+
+  if [[ "$ALL_FLAG" == "true" || "$GLOBAL_FLAG" == "false" ]]; then
+    local proj
+    proj=$(get_registry "false")
+    if _show_in_registry "$proj"; then return 0; fi
+    if [[ "$ALL_FLAG" == "true" ]]; then
+      _show_in_registry "$(get_registry "true")" && return 0
+    fi
+  else
+    _show_in_registry "$(get_registry "true")" && return 0
+  fi
+  die "id '${id}' not found in any searched registry"
+}
+
+cmd_list() {
+  parse_all_flag "$@"
+
+  _list_one_registry() {
+    local registry="$1" label="$2"
+    if [[ ! -d "$registry" ]]; then
+      info "[${label}] not present: $registry"
+      return
+    fi
+    info "[${label}] $registry"
+    local f topic
+    for f in "$registry"/*.md; do
+      [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "index.md" ]] && continue
+      topic=$(basename "$f" .md)
+      grep "^## " "$f" | sed "s/^## /  ${topic}\//g" 2>/dev/null || true
+    done
+  }
+
+  if [[ "$ALL_FLAG" == "true" ]]; then
+    _list_one_registry "$(get_registry "false")" "project"
+    _list_one_registry "$(get_registry "true")"  "global"
+  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
+    _list_one_registry "$(get_registry "true")" "global"
+  else
+    _list_one_registry "$(get_registry "false")" "project"
+  fi
+}
+
+cmd_validate() {
+  parse_all_flag "$@"
+
+  local exit_code=0
+
+  _validate_one_registry() {
+    local registry="$1" label="$2"
+    if [[ ! -d "$registry" ]]; then
+      info "[${label}] not present: $registry (skipping)"
+      return
+    fi
+
+    local errors=0
+    # Temp file to track all ids for dedup detection
+    local id_index
+    id_index=$(creg_mktemp)
+
+    local f
+    for f in "$registry"/*.md; do
+      [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "index.md" ]] && continue
+
+      local current_id="" has_intent="false" has_cmd="false" line
+      while IFS= read -r line; do
+        if [[ "$line" =~ ^##\ (.+)$ ]]; then
+          # Validate outgoing entry
+          if [[ -n "$current_id" ]]; then
+            if [[ "$has_intent" == "false" ]]; then
+              info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing 'intent:'"
+              errors=$((errors + 1))
+            fi
+            if [[ "$has_cmd" == "false" ]]; then
+              info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing both 'verified:' and 'template:'"
+              errors=$((errors + 1))
+            fi
+          fi
+          current_id="${BASH_REMATCH[1]}"
+          has_intent="false"
+          has_cmd="false"
+
+          # Dedup: check id_index
+          local existing_file
+          existing_file=$(grep -F "=${current_id}=" "$id_index" 2>/dev/null | head -1 || true)
+          if [[ -n "$existing_file" ]]; then
+            info "[${label}] ERROR: duplicate id '${current_id}' in $(basename "$f") and $(basename "${existing_file%=*}")"
+            errors=$((errors + 1))
+          else
+            printf '%s=%s=\n' "$f" "$current_id" >> "$id_index"
+          fi
+        elif [[ "$line" =~ ^intent: ]]; then
+          has_intent="true"
+        elif [[ "$line" =~ ^(verified|template): ]]; then
+          has_cmd="true"
+        fi
+      done < "$f"
+
+      # Validate last entry in file
+      if [[ -n "$current_id" ]]; then
+        if [[ "$has_intent" == "false" ]]; then
+          info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing 'intent:'"
+          errors=$((errors + 1))
+        fi
+        if [[ "$has_cmd" == "false" ]]; then
+          info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing both 'verified:' and 'template:'"
+          errors=$((errors + 1))
+        fi
+      fi
+    done
+
+    # Routing-table drift checks
+    local index="$registry/index.md"
+    if [[ -f "$index" ]]; then
+      # Rows pointing to missing files
+      local fname
+      while IFS= read -r fname; do
+        [[ -n "$fname" ]] || continue
+        if [[ ! -f "$registry/$fname" ]]; then
+          info "[${label}] ERROR: routing table references missing file: $fname"
+          errors=$((errors + 1))
+        fi
+      done < <(grep "^| " "$index" | grep -v "^| Task\|^|---" | awk -F'|' '{gsub(/[[:space:]]/, "", $3); if ($3 != "") print $3}')
+
+      # Topic files not listed in routing table
+      for f in "$registry"/*.md; do
+        [[ -f "$f" ]] || continue
+        local bname
+        bname=$(basename "$f")
+        [[ "$bname" == "index.md" ]] && continue
+        if ! grep -q "$bname" "$index" 2>/dev/null; then
+          info "[${label}] ERROR: topic file '${bname}' not listed in routing table"
+          errors=$((errors + 1))
+        fi
+      done
+    fi
+
+    if [[ "$errors" -eq 0 ]]; then
+      local total
+      total=$(wc -l < "$id_index" | tr -d ' ')
+      info "[${label}] OK — ${total} entries, no issues found"
+    else
+      exit_code=1
+    fi
+  }
+
+  if [[ "$ALL_FLAG" == "true" ]]; then
+    _validate_one_registry "$(get_registry "false")" "project"
+    _validate_one_registry "$(get_registry "true")"  "global"
+  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
+    _validate_one_registry "$(get_registry "true")" "global"
+  else
+    _validate_one_registry "$(get_registry "false")" "project"
+  fi
+
+  return $exit_code
+}
+
+cmd_status() {
+  local proj_registry glob_registry
+  proj_registry=$(get_registry "false")
+  glob_registry=$(get_registry "true")
+
+  info "=== Command Registry Status ==="
+  info ""
+
+  if [[ -d "$proj_registry" ]]; then
+    info "Project registry:"
+    info "  Path:    $proj_registry"
+    info "  Entries: $(count_entries "$proj_registry")"
+  else
+    info "Project registry: not initialized"
+    info "  Expected: $proj_registry"
+    info "  Run 'creg init' to create"
+  fi
+
+  info ""
+
+  if [[ -d "$glob_registry" ]]; then
+    info "Global registry:"
+    if [[ -n "${CREG_GLOBAL_PATH:-}" ]]; then
+      info "  Path:    $glob_registry (via \$CREG_GLOBAL_PATH)"
+    else
+      info "  Path:    $glob_registry"
+    fi
+    info "  Entries: $(count_entries "$glob_registry")"
+  else
+    info "Global registry: not initialized"
+    if [[ -n "${CREG_GLOBAL_PATH:-}" ]]; then
+      info "  Expected: $glob_registry (via \$CREG_GLOBAL_PATH)"
+    else
+      info "  Expected: $glob_registry"
+    fi
+    info "  Run 'creg init -g' to create"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+
+usage() {
+  cat <<'EOF'
+creg — command registry CLI
+
+Usage: creg <subcommand> [options]
+
+Bootstrap
+  init [-g]                       Create registry directory + index.md from template
+  inject <file...>                Append activation snippet to rules files (.mdc gets frontmatter)
+  link --cursor                   Create .cursor/rules/local/command-registry → project registry symlink
+
+Write
+  add <topic> <id> [flags] [-g]   Add a new entry to a topic file
+    --intent "..."    (required)
+    --tags "..."
+    --verified "..."  (required if no --template)
+    --template "..."  (required if no --verified)
+    --variant "..."   (repeatable)
+    --anti-pattern "..."  (repeatable)
+
+Read
+  search <keyword> [-g] [--all]   Search by id/tags/intent/verified/template
+  show <id> [-g] [--all]          Print a single entry section
+  list [-g] [--all]               List all entries
+
+Maintenance
+  move <id> <new-topic> [-g]      Relocate entry between topic files
+  validate [-g] [--all]           Check schema, dedup, and routing-table consistency
+  status                          Show registry paths and entry counts
+
+Flags
+  -g, --global    Target global registry (~/.agents/rules/command-registry or $CREG_GLOBAL_PATH)
+  --all           Operate on both registries simultaneously
+  --version       Print version
+  --help          Print this help
+
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+[[ $# -eq 0 ]] && usage && exit 0
+
+case "$1" in
+  --version|-v) printf 'creg %s\n' "$VERSION"; exit 0 ;;
+  --help|-h)    usage; exit 0 ;;
+  init)     shift; cmd_init    "$@" ;;
+  inject)   shift; cmd_inject  "$@" ;;
+  link)     shift; cmd_link    "$@" ;;
+  add)      shift; cmd_add     "$@" ;;
+  move)     shift; cmd_move    "$@" ;;
+  search)   shift; cmd_search  "$@" ;;
+  show)     shift; cmd_show    "$@" ;;
+  list)     shift; cmd_list    "$@" ;;
+  validate) shift; cmd_validate "$@" ;;
+  status)   cmd_status ;;
+  *)        die "Unknown subcommand: $1. Run 'creg --help' for usage." ;;
+esac
