@@ -23,7 +23,20 @@ AI agents re-discover the same shell-command shapes repeatedly — `gh api` path
 bash skills/command-registry/install.sh
 ```
 
-This symlinks `scripts/creg` to `~/.local/bin/creg`. Ensure `~/.local/bin` is on your `PATH`:
+The installer now prompts before creating a global symlink at
+`~/.local/bin/creg`.
+
+Non-interactive options:
+
+```bash
+# install without prompts (and overwrite existing creg symlink/file)
+bash skills/command-registry/install.sh --yes
+
+# skip global install (use direct invocation only)
+bash skills/command-registry/install.sh --skip-global-bin
+```
+
+If installed globally, ensure `~/.local/bin` is on your `PATH`:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"

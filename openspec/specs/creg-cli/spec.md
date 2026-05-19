@@ -20,6 +20,25 @@ The skill SHALL ship a `creg` executable as a shell script at `skills/command-re
 - **WHEN** the skill has been cloned into a project but `install.sh` has not been run
 - **THEN** running `./skills/command-registry/scripts/creg --version` from the repo root succeeds
 
+### Requirement: `install.sh` offers optional global install
+
+The optional `skills/command-registry/install.sh` helper SHALL support both interactive and non-interactive installation flows for exposing `creg` on `PATH`. By default, it MUST prompt whether to install a symlink at `~/.local/bin/creg`. The script MUST support `--yes` (`-y`) to install non-interactively and `--skip-global-bin` to skip global install while still succeeding and showing direct invocation guidance.
+
+#### Scenario: Interactive default prompt
+
+- **WHEN** a user runs `bash skills/command-registry/install.sh` in an interactive shell
+- **THEN** the script prompts whether to install `~/.local/bin/creg` and follows the user's choice
+
+#### Scenario: Non-interactive install with --yes
+
+- **WHEN** a user runs `bash skills/command-registry/install.sh --yes`
+- **THEN** the script installs `creg` to `~/.local/bin/creg` without prompting and overwrites an existing target if needed
+
+#### Scenario: Skip global install
+
+- **WHEN** a user runs `bash skills/command-registry/install.sh --skip-global-bin`
+- **THEN** the script exits successfully without creating `~/.local/bin/creg` and prints direct-path usage for `scripts/creg`
+
 ### Requirement: Global flag
 
 Every subcommand that targets a specific registry scope SHALL accept a `-g` (long form: `--global`) flag. When `-g` is absent the subcommand operates on the project registry. When `-g` is present the subcommand operates on the global registry. Subcommands that operate on both registries simultaneously SHALL accept `--all` instead.
