@@ -1,5 +1,6 @@
 """Tests for review-state filtering and inline-comment fetch gating."""
 import io
+import json
 import sys
 import os
 import unittest
@@ -215,7 +216,11 @@ class TestCompactMode(unittest.TestCase):
                  redirect_stdout(out_buf), redirect_stderr(err_buf):
                 fetch.main()
 
-            cache_files_after = list(pathlib.Path(tmp).iterdir())
+            cache_files_after = {
+                path.name: path.read_text()
+                for path in pathlib.Path(tmp).iterdir()
+                if path.is_file()
+            }
             fetch.CACHE_DIR = orig_cache
             return out_buf.getvalue(), err_buf.getvalue(), cache_files_after
 
@@ -243,11 +248,13 @@ class TestCompactMode(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertIn("No new reviews", err)
 
-    def test_compact_does_not_update_cache(self):
+    def test_compact_updates_cache(self):
         reviews = [_review(1, "CHANGES_REQUESTED", "alice")]
         comments = [_comment(10, 1, path="app.py", body="fix")]
         _, _, cache_files = self._run_compact(reviews, comments)
-        self.assertEqual(cache_files, [], "compact mode must not write a cache file")
+        self.assertEqual(len(cache_files), 1, "compact mode should write cache for dedupe")
+        cache_data = json.loads(next(iter(cache_files.values())))
+        self.assertEqual(cache_data.get("seen_review_ids"), [1])
 
 
 if __name__ == "__main__":

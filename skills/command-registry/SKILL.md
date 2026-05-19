@@ -1,16 +1,16 @@
 ---
 name: command-registry
 description: >
-  A structured, per-project (and cross-project) registry of verified shell commands,
-  parameterized templates, and anti-patterns. Eliminates trial-and-error by giving
-  agents a searchable command database to consult before running or suggesting any
-  shell command.
-compatibility:
-  required_tools: []
+  Use this skill when an agent needs to run, suggest, or retry shell commands.
+  Provides a searchable project/global registry of verified command shapes,
+  templates, and anti-patterns so agents avoid trial-and-error and reuse known-good
+  patterns.
+compatibility: Requires bash 4.0+ and standard POSIX utilities (grep, sed, awk, mktemp).
 metadata:
-  optional_env_vars:
-    CREG_GLOBAL_PATH: "Override the default global registry path (~/.agents/rules/command-registry)"
+  env_var_creg_global_path: "Override default global registry path (~/.agents/rules/command-registry)"
 ---
+
+# Command Registry
 
 ## Purpose
 
@@ -55,7 +55,7 @@ To use the fallback without `PATH` setup:
 
 `creg inject <file>` appends the following snippet verbatim. Agents that read the file will apply the protocol automatically.
 
-```
+```markdown
 ## Command Registry
 
 Before running or suggesting any shell command — and before retrying after a failure —
@@ -83,13 +83,13 @@ Registry wins for command shape. Project rules win for policy.
 When recording a new command, classify it by inspecting its content:
 
 | Command contains | Registry |
-|---|---|
+| --- | --- |
 | Hardcoded project path, hostname, org/repo, or project-specific script (`bin/dcdev`) | Project (no `-g`) |
 | Generic form — all variables use `{{placeholders}}` | Global (`-g`) |
 
 Examples:
 
-```
+```bash
 # Global — no hardcoded values
 gh api repos/{{owner}}/{{repo}}/pulls/{{pr}}/reviews
 

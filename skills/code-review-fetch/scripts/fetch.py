@@ -329,6 +329,8 @@ def main() -> None:
 
     if args.compact:
         _emit_compact_summary(new_reviews, api_base, host)
+        seen.update(r["id"] for r in new_reviews)
+        save_cache(cache_file, seen)
         return
 
     emitted_ids = _emit_full_reviews(new_reviews, api_base, host)
