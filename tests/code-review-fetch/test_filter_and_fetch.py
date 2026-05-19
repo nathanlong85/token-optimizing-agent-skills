@@ -66,7 +66,7 @@ class TestInlineCommentFetchGating(unittest.TestCase):
 
             call_log = []
 
-            def fake_gh_api(path, host):
+            def fake_gh_api(path, host, jq=None):
                 call_log.append(path)
                 if "reviews" in path:
                     return reviews
@@ -138,7 +138,7 @@ class TestStdoutStderr(unittest.TestCase):
             orig_cache = fetch.CACHE_DIR
             fetch.CACHE_DIR = pathlib.Path(tmp)
 
-            def fake_gh_api(path, host):
+            def fake_gh_api(path, host, jq=None):
                 if "reviews" in path:
                     return reviews
                 return inline_comments or []
@@ -157,10 +157,10 @@ class TestStdoutStderr(unittest.TestCase):
             fetch.CACHE_DIR = orig_cache
             return out_buf.getvalue(), err_buf.getvalue()
 
-    def test_no_new_reviews_goes_to_stdout(self):
+    def test_no_new_reviews_goes_to_stderr(self):
         out, err = self._run_main_with_channels([])
-        self.assertIn("No new reviews", out)
-        self.assertEqual(err, "")
+        self.assertIn("No new reviews", err)
+        self.assertEqual(out, "")
 
     def test_coderabbit_fallback_warning_goes_to_stderr(self):
         reviews = [dict(_review(10, "CHANGES_REQUESTED", CODERABBIT), body="plain body no structure")]
@@ -182,8 +182,72 @@ Actionable finding here.
         reviews = [dict(_review(10, "CHANGES_REQUESTED", CODERABBIT), body=cr_body)]
         out, err = self._run_main_with_channels(reviews)
         self.assertIn("Actionable finding here", out)
-        self.assertIn("CodeRabbit Review #10", out)
-        self.assertEqual(err, "")
+        self.assertIn("=== CodeRabbit Review ===", out)
+        self.assertNotIn("CodeRabbit Review #10", out)
+        self.assertIn("Cache updated", err)
+
+
+class TestCompactMode(unittest.TestCase):
+    def _run_compact(self, reviews, inline_comments=None):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            orig_cache = fetch.CACHE_DIR
+            fetch.CACHE_DIR = pathlib.Path(tmp)
+
+            def fake_gh_api(path, host, jq=None):
+                if "reviews" in path:
+                    return reviews
+                return inline_comments or []
+
+            def fake_resolve(*_):
+                return "github.com", "owner", "repo"
+
+            out_buf = io.StringIO()
+            err_buf = io.StringIO()
+            cache_before = set(
+                (pathlib.Path(tmp) / f).stat().st_mtime
+                for f in pathlib.Path(tmp).iterdir()
+            ) if pathlib.Path(tmp).exists() else set()
+
+            with patch.object(fetch, "gh_api", side_effect=fake_gh_api), \
+                 patch.object(fetch, "resolve_context", side_effect=fake_resolve), \
+                 patch("sys.argv", ["fetch.py", "1", "--compact"]), \
+                 redirect_stdout(out_buf), redirect_stderr(err_buf):
+                fetch.main()
+
+            cache_files_after = list(pathlib.Path(tmp).iterdir())
+            fetch.CACHE_DIR = orig_cache
+            return out_buf.getvalue(), err_buf.getvalue(), cache_files_after
+
+    def test_compact_summary_format(self):
+        reviews = [
+            _review(1, "CHANGES_REQUESTED", "alice"),
+            _review(2, "CHANGES_REQUESTED", CODERABBIT),
+        ]
+        comments = [
+            _comment(10, 1, path="app.py", body="fix this"),
+            _comment(11, 1, path="utils.py", body="clean up"),
+            _comment(12, 2, path="app.py", body="nit"),
+        ]
+        out, err, _ = self._run_compact(reviews, comments)
+        self.assertIn("2 new review(s)", out)
+        self.assertIn("alice", out)
+        self.assertIn(CODERABBIT, out)
+        self.assertIn("Files with comments:", out)
+        self.assertIn("app.py", out)
+        self.assertIn("utils.py", out)
+        self.assertIn("Cache updated", err)
+
+    def test_compact_no_new_reviews(self):
+        out, err, _ = self._run_compact([])
+        self.assertEqual(out, "")
+        self.assertIn("No new reviews", err)
+
+    def test_compact_does_not_update_cache(self):
+        reviews = [_review(1, "CHANGES_REQUESTED", "alice")]
+        comments = [_comment(10, 1, path="app.py", body="fix")]
+        _, _, cache_files = self._run_compact(reviews, comments)
+        self.assertEqual(cache_files, [], "compact mode must not write a cache file")
 
 
 if __name__ == "__main__":
