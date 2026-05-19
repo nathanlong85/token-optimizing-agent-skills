@@ -2,7 +2,21 @@
 set -Eeuo pipefail
 
 VERSION="1.0.0"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Resolve the real script path so template lookups keep working when
+# `creg` is invoked through a symlink (e.g. ~/.local/bin/creg).
+SELF_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SELF_PATH" ]]; do
+  SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd -P)"
+  SELF_TARGET="$(readlink "$SELF_PATH")"
+  if [[ "$SELF_TARGET" == /* ]]; then
+    SELF_PATH="$SELF_TARGET"
+  else
+    SELF_PATH="$SELF_DIR/$SELF_TARGET"
+  fi
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd -P)"
 SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Require bash 4.0+ for consistent behavior

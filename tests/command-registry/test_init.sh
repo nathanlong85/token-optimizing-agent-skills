@@ -62,7 +62,21 @@ fi
 # Global idempotency
 "$CREG" init -g 2>&1 | grep -q "Already initialized" && pass "init -g idempotent" || fail "init -g idempotent" "expected message"
 
-rm -rf "$TMP" "$GLOBAL_TMP"
+# ---- symlink invocation ----------------------------------------------------
+
+SYMLINK_BIN=$(mktemp -d)
+SYMLINK_CREG="$SYMLINK_BIN/creg"
+ln -s "$CREG" "$SYMLINK_CREG"
+
+GLOBAL_SYMLINK_TMP=$(mktemp -d)
+CREG_GLOBAL_PATH="$GLOBAL_SYMLINK_TMP/creg-global" "$SYMLINK_CREG" init -g
+if [[ -f "$GLOBAL_SYMLINK_TMP/creg-global/index.md" ]]; then
+  pass "init -g works when creg invoked via symlink"
+else
+  fail "init -g works when creg invoked via symlink" "global index.md missing"
+fi
+
+rm -rf "$TMP" "$GLOBAL_TMP" "$SYMLINK_BIN" "$GLOBAL_SYMLINK_TMP"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
