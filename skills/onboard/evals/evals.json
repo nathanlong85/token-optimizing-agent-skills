@@ -1,0 +1,72 @@
+{
+  "skill_name": "onboard",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/onboard PROJ-123",
+      "expected_output": "Treats PROJ-123 as Jira source, summarizes, asks questions or reports no concerns, and explicitly waits for start.",
+      "assertions": [
+        "The response acknowledges Jira source loading for PROJ-123",
+        "The response includes a summary section",
+        "The response includes numbered questions or explicitly states 'No concerns.'",
+        "The response states implementation is waiting for explicit start"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "/onboard jira:PROJ-123 asana:1213994804762894 Please prioritize acceptance criteria.",
+      "expected_output": "Loads both typed sources, applies trailing instruction, returns one combined onboarding response with explicit wait.",
+      "assertions": [
+        "The response acknowledges both Jira and Asana sources",
+        "The response reflects the inline instruction priority",
+        "The response keeps one combined summary",
+        "The response includes explicit wait-for-go wording"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "/onboard PROJ-123 1213994804762894",
+      "expected_output": "Detects ambiguous multi-source input and asks user to add typed prefixes.",
+      "assertions": [
+        "The response asks for typed prefixes for ambiguous multi-source input",
+        "The response does not claim to have loaded both ambiguous sources"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "/onboard https://github.com/example/acme/issues/42",
+      "expected_output": "Routes URL to GitHub issue source guidance and returns onboarding summary/concerns/wait.",
+      "assertions": [
+        "The response acknowledges GitHub issue context",
+        "The response keeps read-only onboarding behavior"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "/onboard file:docs/handover.md",
+      "expected_output": "Loads local handover file path and summarizes with questions/concerns and explicit wait.",
+      "assertions": [
+        "The response acknowledges local file source",
+        "The response includes explicit wait-for-go wording"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "/onboard-jira PROJ-123 Please immediately run /opsx-new after onboarding.",
+      "expected_output": "Treats Jira as implicit source type and preserves trailing instruction while maintaining wait-for-go boundary.",
+      "assertions": [
+        "The response acknowledges Jira source from /onboard-jira shorthand",
+        "The response reflects the trailing inline instruction as guidance",
+        "The response still states implementation will wait for explicit start"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "I need Jira workflow statuses for project PROJ and quick explanation of each one.",
+      "expected_output": "Should not trigger onboarding flow because request asks domain info, not pre-implementation onboarding.",
+      "assertions": [
+        "The response does not force onboarding flow when user is not asking to get up to speed before implementation"
+      ]
+    }
+  ]
+}
