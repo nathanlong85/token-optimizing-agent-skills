@@ -1,0 +1,35 @@
+{
+  "skill_name": "command-registry",
+  "evals": [
+    {
+      "id": "bootstrap-and-inject",
+      "prompt": "Set up command-registry in this repo and wire it into Cursor rules.",
+      "expected_output": "Project registry is initialized, activation snippet is present in the target rules file, and Cursor link is created when requested.",
+      "assertions": [
+        "Execution includes creg init before add/move/list operations that require an initialized registry",
+        "After creg inject .cursor/rules/creg.mdc, the file contains the literal heading ## Command Registry",
+        "When Cursor setup is requested, creg link --cursor creates .cursor/rules/local/command-registry symlink"
+      ]
+    },
+    {
+      "id": "add-generic-command-global",
+      "prompt": "Record a reusable gh api template for fetching PR comments across repositories.",
+      "expected_output": "Entry is added to global registry with placeholders and intent metadata.",
+      "assertions": [
+        "Agent uses creg add ... -g for generic cross-repo command shapes",
+        "Written entry contains heading ## <id> and includes intent: plus at least one of template: or verified:",
+        "CLI output contains Command registry: added <id> or Command registry: updated <id>"
+      ]
+    },
+    {
+      "id": "retry-uses-anti-patterns",
+      "prompt": "The first shell command failed. Retry using the command-registry protocol.",
+      "expected_output": "Retry path consults matched entry anti_patterns and adapts command shape accordingly.",
+      "assertions": [
+        "Before retrying, agent performs registry lookup via creg search or creg show for the relevant command intent/id",
+        "Retry reasoning references anti_patterns from the matched entry before changing command shape",
+        "Retried command shape is based on the matched verified/template entry rather than an unrelated ad hoc command"
+      ]
+    }
+  ]
+}
