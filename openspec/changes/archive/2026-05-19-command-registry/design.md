@@ -130,8 +130,9 @@ Project wins on conflicts. For each registry found:
   a. Identify the right topic file from index.md routing table.
   b. Search (grep/rg) for the `## snake_case_id`, tags, or keyword. Read only that section.
   c. Prefer: exact verified → adapt template → closest intent.
+  d. If retrying after a failure, re-scan `anti_patterns` in the matched entry before changing command shape.
 
-After a command succeeds that isn't in the registry: use `creg add` to record it that turn.
+After a command succeeds that is not in the registry: use `creg add` to record it that turn.
   - Contains project-specific path/host/script → project registry (no -g)
   - Generic, works across repos → global registry (creg add ... -g)
   Print one line to the user: `Command registry: added <id>` or `Command registry: updated <id>`.
