@@ -1,11 +1,11 @@
-# Token-Optimizing Agent Skills
+# Agent Skills
 
-A repository for custom token-optimizing skills designed for AI agents. This repo holds reusable, production-ready skills that reduce token overhead for common agent operations.
+A repository of custom skills for AI agents. Skills are built with token efficiency as a cross-cutting design principle, even when that's not their primary purpose.
 
 ## Repository Structure
 
 ```
-token-optimizing-agent-skills/
+agent-skills/
 ├── skills/
 │   └── <skill-name>/
 │       ├── README.md              # Skill documentation
@@ -52,7 +52,7 @@ token-optimizing-agent-skills/
 
 ## Skills
 
-### code-review-fetch
+### code-review-fetch `[token-use-reduction]`
 Fetch GitHub PR review comments in a compact, token-efficient format. Extracts CodeRabbit's AI prompt blocks and synthesizes human inline comments into a uniform format, deduplicating across review rounds using local caching.
 
 See `skills/code-review-fetch/README.md` for details.
