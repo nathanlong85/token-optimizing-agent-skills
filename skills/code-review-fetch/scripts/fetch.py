@@ -10,10 +10,14 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 CODERABBIT_LOGIN = "svc-coderabbit[bot]"
 SKIP_STATES = {"APPROVED", "DISMISSED", "PENDING"}
 CACHE_DIR = Path.home() / ".cache" / "code-review-fetch"
+
+_JQ_REVIEWS = '[.[] | {id, state, submitted_at, body, user: {login: .user.login}}]'
+_JQ_COMMENTS = '[.[] | {pull_request_review_id, path, line, original_line, body}]'
 
 
 # ---------------------------------------------------------------------------
@@ -62,18 +66,20 @@ def resolve_context(repo: str | None, host: str | None) -> tuple[str, str, str]:
         if "github.com" in url:
             host = "github.com"
         else:
-            from urllib.parse import urlparse
             host = urlparse(url).hostname or "github.com"
 
     owner, repo_name = repo.split("/", 1)
     return host, owner, repo_name
 
 
-def gh_api(path: str, host: str) -> list | dict:
+def gh_api(path: str, host: str, jq: str | None = None) -> list:
     """Call gh api --paginate and return parsed JSON."""
+    cmd = ["gh", "api", path, "--paginate"]
+    if jq:
+        cmd += ["--jq", jq]
     try:
         result = subprocess.run(
-            ["gh", "api", path, "--paginate"],
+            cmd,
             capture_output=True, text=True, check=True,
             env=_gh_env(host),
         )
@@ -236,6 +242,62 @@ def _format_date(submitted_at: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+def _emit_compact_summary(new_reviews: list, api_base: str, host: str) -> None:
+    """Print compact reviewer + file summary to stdout; status line to stderr."""
+    logins = [r.get("user", {}).get("login", "unknown") for r in new_reviews]
+    print(f"{len(new_reviews)} new review(s) — {', '.join(logins)}")
+
+    comments = gh_api(f"{api_base}/comments", host, jq=_JQ_COMMENTS)
+    new_review_ids = {r["id"] for r in new_reviews}
+    file_counts: dict[str, int] = defaultdict(int)
+    for c in comments:
+        if c.get("pull_request_review_id") in new_review_ids:
+            file_counts[c.get("path", "?")] += 1
+
+    if file_counts:
+        print("Files with comments:")
+        for path, count in sorted(file_counts.items()):
+            print(f"  {path} ({count})")
+
+    print(f"[{len(new_reviews)} new review(s). Cache updated.]", file=sys.stderr)
+
+
+def _emit_full_reviews(new_reviews: list, api_base: str, host: str) -> list[int]:
+    """Print full review content to stdout; return IDs of emitted reviews."""
+    non_coderabbit = [r for r in new_reviews if r.get("user", {}).get("login") != CODERABBIT_LOGIN]
+
+    grouped: dict[int, list] = {}
+    if non_coderabbit:
+        inline_comments = gh_api(f"{api_base}/comments", host, jq=_JQ_COMMENTS)
+        grouped = group_inline_comments(inline_comments)
+
+    emitted_ids: list[int] = []
+    for review in new_reviews:
+        rid = review["id"]
+        login = review.get("user", {}).get("login", "unknown")
+        body = review.get("body") or ""
+
+        if login == CODERABBIT_LOGIN:
+            print("=== CodeRabbit Review ===")
+            print(extract_coderabbit_content(body, rid))
+            print()
+            emitted_ids.append(rid)
+        else:
+            rendered = render_human_review(rid, grouped)
+            if rendered is None:
+                continue  # no inline comments — skip (e.g. "LGTM")
+            print(f"=== Review by {login} ===")
+            print(rendered)
+            print()
+            emitted_ids.append(rid)
+
+    return emitted_ids
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -247,66 +309,37 @@ def main() -> None:
     parser.add_argument("--repo", help="owner/repo (inferred from git remote if omitted)")
     parser.add_argument("--host", help="GitHub hostname (default: inferred from remote)")
     parser.add_argument("--clear", action="store_true", help="Delete cached review IDs for this PR before fetching")
+    parser.add_argument("--compact", action="store_true", help="Emit a brief summary (reviewers, files, counts) instead of full comment bodies")
     args = parser.parse_args()
 
     host, owner, repo_name = resolve_context(args.repo, args.host)
-    pr = args.pr
-    api_base = f"repos/{owner}/{repo_name}/pulls/{pr}"
+    api_base = f"repos/{owner}/{repo_name}/pulls/{args.pr}"
 
-    # Cache
-    cache_file = _cache_path(host, owner, repo_name, pr)
+    cache_file = _cache_path(host, owner, repo_name, args.pr)
     if args.clear and cache_file.exists():
         cache_file.unlink()
     seen = load_cache(cache_file)
 
-    # Fetch and filter reviews
-    reviews = gh_api(f"{api_base}/reviews", host)
-    reviewable = [r for r in reviews if r.get("state") not in SKIP_STATES]
-    new_reviews = [r for r in reviewable if r["id"] not in seen]
+    reviews = gh_api(f"{api_base}/reviews", host, jq=_JQ_REVIEWS)
+    new_reviews = [r for r in reviews if r.get("state") not in SKIP_STATES and r["id"] not in seen]
 
     if not new_reviews:
-        print("[No new reviews since last run.]")
+        print("[No new reviews since last run.]", file=sys.stderr)
         return
 
-    coderabbit_ids = {r["id"] for r in new_reviews if r.get("user", {}).get("login") == CODERABBIT_LOGIN}
-    non_coderabbit = [r for r in new_reviews if r["id"] not in coderabbit_ids]
+    if args.compact:
+        _emit_compact_summary(new_reviews, api_base, host)
+        return
 
-    # Fetch inline comments once if any human reviews exist
-    grouped: dict[int, list] = {}
-    if non_coderabbit:
-        inline_comments = gh_api(f"{api_base}/comments", host)
-        grouped = group_inline_comments(inline_comments)
-
-    # Emit each new review
-    emitted_ids: list[int] = []
-    for review in new_reviews:
-        rid = review["id"]
-        login = review.get("user", {}).get("login", "unknown")
-        date = _format_date(review.get("submitted_at", ""))
-        body = review.get("body") or ""
-
-        if login == CODERABBIT_LOGIN:
-            content = extract_coderabbit_content(body, rid)
-            print(f"=== CodeRabbit Review #{rid} ({date}) ===")
-            print(content)
-            print()
-            emitted_ids.append(rid)
-        else:
-            rendered = render_human_review(rid, grouped)
-            if rendered is None:
-                continue  # no inline comments — skip (e.g. "LGTM")
-            print(f"=== Review by {login} #{rid} ({date}) ===")
-            print(rendered)
-            print()
-            emitted_ids.append(rid)
+    emitted_ids = _emit_full_reviews(new_reviews, api_base, host)
 
     if not emitted_ids:
-        print("[No new reviews since last run.]")
+        print("[No new reviews since last run.]", file=sys.stderr)
         return
 
     seen.update(emitted_ids)
     save_cache(cache_file, seen)
-    print(f"[{len(emitted_ids)} new review(s). Cache updated.]")
+    print(f"[{len(emitted_ids)} new review(s). Cache updated.]", file=sys.stderr)
 
 
 if __name__ == "__main__":

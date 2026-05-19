@@ -19,17 +19,17 @@ class TestHeaderFormat(unittest.TestCase):
     """Verify header strings follow the spec format."""
 
     def test_coderabbit_header(self):
-        rid = 10
-        date = "2026-05-14"
-        header = f"=== CodeRabbit Review #{rid} ({date}) ==="
-        self.assertEqual(header, "=== CodeRabbit Review #10 (2026-05-14) ===")
+        header = "=== CodeRabbit Review ==="
+        self.assertEqual(header, "=== CodeRabbit Review ===")
+        self.assertNotIn("#", header)
+        self.assertNotIn("(", header)
 
     def test_human_header(self):
         login = "alice"
-        rid = 11
-        date = "2026-05-14"
-        header = f"=== Review by {login} #{rid} ({date}) ==="
-        self.assertEqual(header, "=== Review by alice #11 (2026-05-14) ===")
+        header = f"=== Review by {login} ==="
+        self.assertEqual(header, "=== Review by alice ===")
+        self.assertNotIn("#", header)
+        self.assertNotIn("(", header)
 
 
 class TestRenderHumanReviewOutput(unittest.TestCase):
