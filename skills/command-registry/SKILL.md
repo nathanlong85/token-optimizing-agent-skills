@@ -120,3 +120,43 @@ creg link --cursor
 # 4. Verify
 creg status
 ```
+
+## Catch-all Reclassification Workflow
+
+Use this only when asked to reclassify catch-all entries (for example from
+`other.md`).
+
+1. Identify candidate catch-all entries using targeted reads (`creg list`,
+   `creg show <id>`) rather than loading whole topic files.
+2. Create a dry-run plan before any move.
+3. Wait for explicit user approval.
+4. Execute approved moves with deterministic CLI commands.
+5. Run `creg validate` after applying changes.
+
+### Dry-run plan fields
+
+Every reclassification proposal should include:
+
+- Proposed new or existing topic file per cluster
+- Entry IDs to move
+- One-line rationale per move
+- Confidence per move (high/medium/low or numeric)
+- Entries intentionally left in catch-all
+- Validation and rollback notes
+
+### Conservative defaults
+
+- Default cluster threshold: 3 related entries before proposing a new topic file
+- If confidence is low, leave entry in catch-all
+- Do not move singleton entries unless user names a destination or asks for aggressive cleanup
+
+### Scope review (project vs global)
+
+During reclassification, review whether each entry should stay in project
+registry or move to global.
+
+- Generic, placeholder-based entries may belong in global (`-g`)
+- Project-specific path/host/org/script entries belong in project
+
+Cross-scope moves require explicit user approval and should be called out
+separately in the dry-run plan.
