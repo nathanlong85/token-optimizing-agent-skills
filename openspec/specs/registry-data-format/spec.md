@@ -36,12 +36,22 @@ Every registry directory SHALL contain an `index.md` file at its root. The file 
 
 ### Requirement: Topic file entry schema
 
-Each entry in a topic file SHALL be introduced by a level-2 markdown heading of the form `## snake_case_id`. The `id` MUST be globally unique across all topic files within a single registry. Each entry MUST contain an `intent:` field on a single line. Each entry MAY contain `tags:`, `verified:`, `template:`, `variants:`, and `anti_patterns:` fields. `verified:` and `template:` are mutually optional but at least one MUST be present. `variants:` and `anti_patterns:`, when present, are bulleted lists.
+Each entry in a topic file SHALL be introduced by a level-2 markdown heading of the form `## snake_case_id`. The `id` MUST be globally unique across all topic files within a single registry. Each entry MUST contain an `intent:` field on a single line. Each entry MAY contain `tags:`, `verified:`, `template:`, `variants:`, and `anti_patterns:` fields. `verified:` and `template:` are mutually optional but at least one MUST be present. `tags:`, when written by `creg`, MUST use a bulleted list of lowercase alphanumeric hyphenated tag tokens. Legacy inline tag strings MUST remain readable by CLI read, search, validation, and migration commands. `variants:` and `anti_patterns:`, when present, are bulleted lists.
 
 #### Scenario: Minimal valid entry
 
 - **WHEN** an entry has `## my_command`, `intent: Brief description`, and `verified: ls -la`
 - **THEN** the entry passes schema validation
+
+#### Scenario: Entry with canonical tags
+
+- **WHEN** an entry has `tags:` followed by bullets `- docker` and `- logs`
+- **THEN** the entry passes schema validation and the tags are available for exact tag filtering
+
+#### Scenario: Legacy inline tags remain readable
+
+- **WHEN** an existing entry has `tags: docker logs debugging`
+- **THEN** CLI read and search commands treat the entry as having the tags `docker`, `logs`, and `debugging`
 
 #### Scenario: Entry with template and anti-patterns
 
@@ -84,3 +94,27 @@ A registry SHALL contain at most one entry with any given `id` across all of its
 
 - **WHEN** `git_github.md` already contains `## pr_view` and an agent runs `creg add other pr_view ...`
 - **THEN** the command fails with a message indicating where the existing `pr_view` entry lives and suggesting `creg move` or extending the existing entry
+
+### Requirement: Portable registry bundle format
+
+A portable command-registry export SHALL be a markdown document using the `creg-bundle-v1` format. The document MUST start with a level-1 heading, include a `format: creg-bundle-v1` metadata line before any entry, and represent each exported entry as a level-2 heading of the form `## <topic>/<id>`. The entry body MUST use the same field syntax as topic-file entries. Importers MUST reject bundle entries whose topic or id cannot be represented safely in registry topic files.
+
+#### Scenario: Bundle contains one entry
+
+- **WHEN** a bundle contains `format: creg-bundle-v1`, a heading `## docker/docker_logs`, and an entry body with `intent:` and `template:`
+- **THEN** the bundle identifies one importable entry with topic `docker` and id `docker_logs`
+
+#### Scenario: Bundle preserves entry fields
+
+- **WHEN** an exported entry contains `tags:`, `verified:`, `template:`, `variants:`, and `anti_patterns:`
+- **THEN** the bundle preserves those fields using the same syntax accepted by registry topic files
+
+#### Scenario: Invalid bundle heading rejected
+
+- **WHEN** a bundle entry heading does not match `## <topic>/<id>`
+- **THEN** import validation rejects the bundle with a clear message identifying the invalid heading
+
+#### Scenario: Unsupported bundle format rejected
+
+- **WHEN** a bundle does not contain `format: creg-bundle-v1`
+- **THEN** import validation rejects the bundle without modifying any registry files

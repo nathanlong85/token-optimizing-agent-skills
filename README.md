@@ -25,7 +25,7 @@ agent-skills/
 
 ## Adding a New Skill
 
-**Agents:** Before designing or changing any skill, read the official Agent Skills docs ([index](https://agentskills.io/llms.txt)): [specification](https://agentskills.io/specification.md), [best practices](https://agentskills.io/skill-creation/best-practices.md), [optimizing descriptions](https://agentskills.io/skill-creation/optimizing-descriptions.md), [evaluating skills](https://agentskills.io/skill-creation/evaluating-skills.md), [using scripts](https://agentskills.io/skill-creation/using-scripts.md). Then confirm to the user (with 🎉) that you have the full spec and creation docs before proceeding. Validate with `skills-ref validate ./skills/<skill-name>` when available.
+**Agents:** Before designing or changing any skill, read the official Agent Skills docs ([index](https://agentskills.io/llms.txt)): [specification](https://agentskills.io/specification.md), [best practices](https://agentskills.io/skill-creation/best-practices.md), [optimizing descriptions](https://agentskills.io/skill-creation/optimizing-descriptions.md), [evaluating skills](https://agentskills.io/skill-creation/evaluating-skills.md), [using scripts](https://agentskills.io/skill-creation/using-scripts.md). Then confirm to the user (with 🎉) that you have the full spec and creation docs before proceeding. Validate with `agentskills validate ./skills/<skill-name>` when available.
 
 1. **Create skill directory**:
    ```
