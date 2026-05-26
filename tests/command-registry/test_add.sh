@@ -82,10 +82,12 @@ fi
   --anti-pattern "git log --oneline (doesn't show PR metadata)" \
   --anti-pattern "hub pr list (deprecated)"
 
-if grep -q "^tags: github pull-requests$" ".agents/rules/local/command-registry/git_github.md"; then
-  pass "add writes tags field"
+if grep -q "^tags:$" ".agents/rules/local/command-registry/git_github.md" && \
+   grep -q "^- github$" ".agents/rules/local/command-registry/git_github.md" && \
+   grep -q "^- pull-requests$" ".agents/rules/local/command-registry/git_github.md"; then
+  pass "add writes canonical tags list"
 else
-  fail "add writes tags field" "not found"
+  fail "add writes canonical tags list" "not found"
 fi
 
 if grep -q "^variants:$" ".agents/rules/local/command-registry/git_github.md"; then
@@ -99,6 +101,15 @@ if [[ "$ap_count" -ge 2 ]]; then
   pass "add writes multiple anti_pattern bullets"
 else
   fail "add writes multiple anti_pattern bullets" "found $ap_count bullets"
+fi
+
+# ---- invalid tag rejected --------------------------------------------------
+
+out4=$("$CREG" add git_github bad_tags --intent "Bad tags" --verified "echo hi" --tags "Docker Logs" 2>&1 || true)
+if echo "$out4" | grep -q "invalid tag"; then
+  pass "add rejects invalid tag tokens"
+else
+  fail "add rejects invalid tag tokens" "no error. got: $out4"
 fi
 
 # ---- dedup rejection -------------------------------------------------------
