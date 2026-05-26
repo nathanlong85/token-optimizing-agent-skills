@@ -106,18 +106,6 @@ count_entries() {
   echo "$count"
 }
 
-# Parse -g/--global from "$@"; sets GLOBAL_FLAG and REMAINING_ARGS
-parse_global_flag() {
-  GLOBAL_FLAG="false"
-  REMAINING_ARGS=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -g|--global) GLOBAL_FLAG="true"; shift ;;
-      *) REMAINING_ARGS+=("$1"); shift ;;
-    esac
-  done
-}
-
 # Parse --all and -g from "$@"; sets ALL_FLAG, GLOBAL_FLAG, REMAINING_ARGS
 parse_all_flag() {
   ALL_FLAG="false"
@@ -130,6 +118,46 @@ parse_all_flag() {
       *) REMAINING_ARGS+=("$1"); shift ;;
     esac
   done
+}
+
+# Invoke callback for each registry selected by ALL_FLAG / GLOBAL_FLAG.
+creg_for_each_registry() {
+  local callback="$1"
+  if [[ "$ALL_FLAG" == "true" ]]; then
+    "$callback" "$(get_registry "false")" "project"
+    "$callback" "$(get_registry "true")"  "global"
+  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
+    "$callback" "$(get_registry "true")" "global"
+  else
+    "$callback" "$(get_registry "false")" "project"
+  fi
+}
+
+creg_plural_entries() {
+  [[ "$1" -eq 1 ]] && printf 'entry' || printf 'entries'
+}
+
+list_entry_ids() {
+  grep '^## ' "$1" 2>/dev/null | sed 's/^## //' || true
+}
+
+creg_extract_section_temp() {
+  local file="$1" id="$2" section_file
+  section_file=$(creg_mktemp)
+  extract_section "$file" "$id" > "$section_file"
+  printf '%s' "$section_file"
+}
+
+creg_install_section() {
+  local registry="$1" topic="$2" block_file="$3"
+  local topic_file="$registry/${topic}.md"
+  if [[ ! -f "$topic_file" ]]; then
+    cp "$block_file" "$topic_file"
+    local index="$registry/index.md"
+    [[ -f "$index" ]] && add_routing_row "$index" "$topic" "$topic_file"
+  else
+    insert_sorted "$topic_file" "$block_file"
+  fi
 }
 
 # Find topic file containing an id; prints filepath or returns 1
@@ -274,21 +302,20 @@ creg_validate_tags_array() {
   done
 }
 
-# Print canonical tags block to stdout.
-creg_render_tags_block() {
-  local tag
-  [[ ${#CREG_TAGS_ARRAY[@]} -gt 0 ]] || return 0
-  printf 'tags:\n'
-  for tag in "${CREG_TAGS_ARRAY[@]}"; do
-    printf -- '- %s\n' "$tag"
+creg_render_yaml_list() {
+  local header="$1"
+  shift
+  [[ $# -gt 0 ]] || return 0
+  printf '%s:\n' "$header"
+  local item
+  for item in "$@"; do
+    printf -- '- %s\n' "$item"
   done
 }
 
-# Split comma-separated tag filter values into CREG_FILTER_TAGS.
-creg_parse_tag_filter() {
-  local input="$1"
-  creg_parse_tag_input "$input"
-  CREG_FILTER_TAGS=("${CREG_TAGS_ARRAY[@]}")
+# Print canonical tags block to stdout.
+creg_render_tags_block() {
+  creg_render_yaml_list tags "${CREG_TAGS_ARRAY[@]}"
 }
 
 # Return 0 when needle is present in haystack array.
@@ -300,17 +327,6 @@ creg_array_contains() {
     [[ "$item" == "$needle" ]] && return 0
   done
   return 1
-}
-
-# Parse comma-separated tag list into caller-named array variable.
-creg_split_csv_tags() {
-  local input="$1" varname="$2"
-  creg_parse_tag_input "$input"
-  eval "${varname}=()"
-  local tag
-  for tag in "${CREG_TAGS_ARRAY[@]}"; do
-    eval "${varname}+=(\"\$tag\")"
-  done
 }
 
 # Extract tags for one entry section file; prints one tag per line.
@@ -352,25 +368,30 @@ creg_entry_tags_from_section_file() {
 }
 
 # Return 0 when entry tags satisfy AND/ANY/EXCLUDE filters.
+# Optional filter args default to SEARCH_* globals when omitted.
 creg_entry_matches_tag_filters() {
   local section_file="$1"
-  local -a entry_tags=()
-  local -a required=() any=() exclude=()
+  local filter_tags="${2:-${SEARCH_TAGS:-}}"
+  local filter_any="${3:-${SEARCH_ANY_TAGS:-}}"
+  local filter_exclude="${4:-${SEARCH_EXCLUDE_TAGS:-}}"
+  local -a entry_tags=() required=() any=() exclude=()
   local tag req ex
 
   while IFS= read -r tag; do
     [[ -n "$tag" ]] && entry_tags+=("$tag")
   done < <(creg_entry_tags_from_section_file "$section_file")
 
-  if [[ -n "${SEARCH_TAGS:-}" ]]; then
-    creg_split_csv_tags "$SEARCH_TAGS" required
+  if [[ -n "$filter_tags" ]]; then
+    creg_parse_tag_input "$filter_tags"
+    required=("${CREG_TAGS_ARRAY[@]}")
     for req in "${required[@]}"; do
       creg_array_contains "$req" "${entry_tags[@]}" || return 1
     done
   fi
 
-  if [[ -n "${SEARCH_ANY_TAGS:-}" ]]; then
-    creg_split_csv_tags "$SEARCH_ANY_TAGS" any
+  if [[ -n "$filter_any" ]]; then
+    creg_parse_tag_input "$filter_any"
+    any=("${CREG_TAGS_ARRAY[@]}")
     local matched="false"
     for req in "${any[@]}"; do
       if creg_array_contains "$req" "${entry_tags[@]}"; then
@@ -381,8 +402,9 @@ creg_entry_matches_tag_filters() {
     [[ "$matched" == "true" ]] || return 1
   fi
 
-  if [[ -n "${SEARCH_EXCLUDE_TAGS:-}" ]]; then
-    creg_split_csv_tags "$SEARCH_EXCLUDE_TAGS" exclude
+  if [[ -n "$filter_exclude" ]]; then
+    creg_parse_tag_input "$filter_exclude"
+    exclude=("${CREG_TAGS_ARRAY[@]}")
     for ex in "${exclude[@]}"; do
       creg_array_contains "$ex" "${entry_tags[@]}" && return 1
     done
@@ -558,9 +580,9 @@ creg_upgrade_tags_in_registry() {
   if [[ "$total_changes" -eq 0 ]]; then
     info "[${label}] no legacy inline tags found"
   elif [[ "$UPGRADE_DRY_RUN" == "true" ]]; then
-    info "[${label}] dry-run complete — ${total_changes} entr$( [[ "$total_changes" -eq 1 ]] && echo y || echo ies ) would be upgraded"
+    info "[${label}] dry-run complete — ${total_changes} $(creg_plural_entries "$total_changes") would be upgraded"
   else
-    info "[${label}] upgraded tags in ${total_changes} entr$( [[ "$total_changes" -eq 1 ]] && echo y || echo ies )"
+    info "[${label}] upgraded tags in ${total_changes} $(creg_plural_entries "$total_changes")"
   fi
 }
 
@@ -570,11 +592,7 @@ creg_upgrade_tags_in_registry() {
 
 CREG_BUNDLE_FORMAT="creg-bundle-v1"
 
-creg_bundle_valid_topic() {
-  [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]]
-}
-
-creg_bundle_valid_id() {
+creg_bundle_valid_name() {
   [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]]
 }
 
@@ -585,11 +603,10 @@ creg_render_bundle_header() {
 
 creg_entry_body_lines() {
   local section_file="$1"
-  if grep -q '^## ' "$section_file" 2>/dev/null; then
-    awk 'NR>1 && $0 !~ /^registry_scope:/ { print }' "$section_file"
-  else
-    awk '$0 !~ /^registry_scope:/ { print }' "$section_file"
-  fi
+  awk '
+    NR == 1 && $0 ~ /^## / { next }
+    $0 !~ /^registry_scope:/ { print }
+  ' "$section_file"
 }
 
 creg_normalize_entry_text() {
@@ -609,18 +626,10 @@ creg_render_bundle_entry() {
   printf '\n'
 }
 
-creg_registry_block_from_bundle() {
-  local id="$1" body_file="$2"
-  {
-    printf '## %s\n\n' "$id"
-    cat "$body_file"
-  }
-}
-
 creg_validate_bundle_entry_body() {
   local topic="$1" id="$2" body_file="$3"
-  creg_bundle_valid_topic "$topic" || die "invalid bundle topic '${topic}'"
-  creg_bundle_valid_id "$id" || die "invalid bundle id '${id}'"
+  creg_bundle_valid_name "$topic" || die "invalid bundle topic '${topic}'"
+  creg_bundle_valid_name "$id" || die "invalid bundle id '${id}'"
   grep -q '^intent:' "$body_file" || die "bundle entry '${topic}/${id}' missing intent:"
   grep -q '^verified:\|^template:' "$body_file" || die "bundle entry '${topic}/${id}' missing verified: or template:"
 }
@@ -670,8 +679,7 @@ creg_import_classify() {
     return 0
   fi
 
-  existing_body=$(creg_mktemp)
-  extract_section "$existing_file" "$id" > "$existing_body"
+  existing_body=$(creg_extract_section_temp "$existing_file" "$id")
   norm_new=$(creg_normalize_entry_text < "$body_file")
   norm_old=$(creg_normalize_entry_body_file "$existing_body")
   if [[ "$norm_new" == "$norm_old" ]]; then
@@ -686,19 +694,16 @@ creg_write_registry_entry() {
   local topic_file="$registry/${topic}.md"
   local block_file
   block_file=$(creg_mktemp)
-  creg_registry_block_from_bundle "$id" "$body_file" > "$block_file"
+  {
+    printf '## %s\n\n' "$id"
+    cat "$body_file"
+  } > "$block_file"
 
   if [[ "$replace" == "true" ]]; then
     remove_section "$topic_file" "$id"
   fi
 
-  if [[ ! -f "$topic_file" ]]; then
-    cp "$block_file" "$topic_file"
-    local index="$registry/index.md"
-    [[ -f "$index" ]] && add_routing_row "$index" "$topic" "$topic_file"
-  else
-    insert_sorted "$topic_file" "$block_file"
-  fi
+  creg_install_section "$registry" "$topic" "$block_file"
 }
 
 creg_entry_matches_export_filters() {
@@ -709,10 +714,7 @@ creg_entry_matches_export_filters() {
     grep -q '^verified:' "$section_file" || return 1
   fi
   if [[ -n "$EXPORT_TAGS" ]]; then
-    local saved_search_tags="${SEARCH_TAGS:-}"
-    SEARCH_TAGS="$EXPORT_TAGS"
-    creg_entry_matches_tag_filters "$section_file" || { SEARCH_TAGS="$saved_search_tags"; return 1; }
-    SEARCH_TAGS="$saved_search_tags"
+    creg_entry_matches_tag_filters "$section_file" "$EXPORT_TAGS" || return 1
   fi
   return 0
 }
@@ -776,16 +778,22 @@ _creg_export_registry() {
 
     while IFS= read -r id; do
       [[ -n "$id" ]] || continue
-      section_file=$(creg_mktemp)
-      extract_section "$f" "$id" > "$section_file"
+      section_file=$(creg_extract_section_temp "$f" "$id")
       creg_entry_matches_export_filters "$topic" "$id" "$section_file" || continue
       if [[ "$include_scope" == "true" ]]; then
         creg_render_bundle_entry "$topic" "$id" "$section_file" "$scope_label"
       else
         creg_render_bundle_entry "$topic" "$id" "$section_file"
       fi
-    done < <(grep '^## ' "$f" 2>/dev/null | sed 's/^## //' || true)
+    done < <(list_entry_ids "$f")
   done
+}
+
+_export_one_registry() {
+  local registry="$1" label="$2"
+  local include_scope="false"
+  [[ "$ALL_FLAG" == "true" ]] && include_scope="true"
+  _creg_export_registry "$registry" "$label" "$include_scope"
 }
 
 cmd_export() {
@@ -797,15 +805,12 @@ cmd_export() {
   {
     if [[ "$ALL_FLAG" == "true" ]]; then
       creg_render_bundle_header "all"
-      _creg_export_registry "$(get_registry "false")" "project" "true"
-      _creg_export_registry "$(get_registry "true")" "global" "true"
     elif [[ "$GLOBAL_FLAG" == "true" ]]; then
       creg_render_bundle_header "global"
-      _creg_export_registry "$(get_registry "true")" "global" "false"
     else
       creg_render_bundle_header "project"
-      _creg_export_registry "$(get_registry "false")" "project" "false"
     fi
+    creg_for_each_registry _export_one_registry
   } > "$sink"
 
   if [[ -n "$EXPORT_OUTPUT" ]]; then
@@ -823,13 +828,12 @@ cmd_import() {
   manifest_file=$(creg_mktemp)
   creg_bundle_load "$IMPORT_FILE" "$manifest_file"
 
-  local -a actions=() topics=() ids=() bodies=() statuses=()
-  local line topic id body_file status renamed_id
+  local -a topics=() ids=() bodies=() statuses=()
+  local topic id body_file status renamed_id
   while IFS='|' read -r topic id body_file; do
     [[ -n "$topic" ]] || continue
     creg_validate_bundle_entry_body "$topic" "$id" "$body_file"
     status=$(creg_import_classify "$registry" "$topic" "$id" "$body_file")
-    actions+=("$status")
     topics+=("$topic")
     ids+=("$id")
     bodies+=("$body_file")
@@ -848,15 +852,14 @@ cmd_import() {
     return 0
   fi
 
-  local conflict_count=0 new_count=0
+  local conflict_count=0
   local i
   for i in "${!statuses[@]}"; do
     [[ "${statuses[$i]}" == "conflict" ]] && conflict_count=$((conflict_count + 1))
-    [[ "${statuses[$i]}" == "new" ]] && new_count=$((new_count + 1))
   done
 
   if [[ "$conflict_count" -gt 0 && "$IMPORT_MERGE" != "true" && "$IMPORT_OVERWRITE" != "true" && "$IMPORT_RENAME" != "true" ]]; then
-    die "import blocked: ${conflict_count} conflicting entr$( [[ "$conflict_count" -eq 1 ]] && echo y || echo ies ). Re-run with --merge, --overwrite, or --rename-conflicts"
+    die "import blocked: ${conflict_count} conflicting $(creg_plural_entries "$conflict_count"). Re-run with --merge, --overwrite, or --rename-conflicts"
   fi
 
   if [[ "$IMPORT_RENAME" == "true" ]]; then
@@ -933,7 +936,7 @@ SNIPPET_MARKER="## Command Registry"
 # ---------------------------------------------------------------------------
 
 cmd_init() {
-  parse_global_flag "$@"
+  parse_all_flag "$@"
   local registry
   registry=$(get_registry "$GLOBAL_FLAG")
   if [[ -f "$registry/index.md" ]]; then
@@ -1049,10 +1052,6 @@ cmd_add() {
     die "id '${id}' already exists in $(basename "$existing_file"). Use 'creg move' to relocate or extend the existing entry."
   fi
 
-  local topic_file="$registry/${topic}.md"
-  local is_new_topic="false"
-  [[ -f "$topic_file" ]] || is_new_topic="true"
-
   # Write block to a temp file (avoids awk -v newline issues)
   local block_file
   block_file=$(creg_mktemp)
@@ -1065,29 +1064,17 @@ cmd_add() {
     fi
     [[ -n "$verified" ]] && printf 'verified: %s\n' "$verified"
     [[ -n "$template" ]] && printf 'template: %s\n' "$template"
-    if [[ ${#variants[@]} -gt 0 ]]; then
-      printf 'variants:\n'
-      local v; for v in "${variants[@]}"; do printf -- '- %s\n' "$v"; done
-    fi
-    if [[ ${#anti_patterns[@]} -gt 0 ]]; then
-      printf 'anti_patterns:\n'
-      local ap; for ap in "${anti_patterns[@]}"; do printf -- '- %s\n' "$ap"; done
-    fi
+    creg_render_yaml_list variants "${variants[@]}"
+    creg_render_yaml_list anti_patterns "${anti_patterns[@]}"
   } > "$block_file"
 
-  if [[ "$is_new_topic" == "true" ]]; then
-    cp "$block_file" "$topic_file"
-    local index="$registry/index.md"
-    [[ -f "$index" ]] && add_routing_row "$index" "$topic" "$topic_file"
-  else
-    insert_sorted "$topic_file" "$block_file"
-  fi
+  creg_install_section "$registry" "$topic" "$block_file"
 
   info "Command registry: added ${id}"
 }
 
 cmd_move() {
-  parse_global_flag "$@"
+  parse_all_flag "$@"
   set -- "${REMAINING_ARGS[@]}"
   local id="${1:-}" new_topic="${2:-}"
   [[ -n "$id" ]]        || die "Usage: creg move <id> <new-topic> [-g]"
@@ -1100,24 +1087,11 @@ cmd_move() {
   local src_file
   src_file=$(find_entry_file "$registry" "$id") || die "id '${id}' not found in registry: $registry"
 
-  local dst_file="$registry/${new_topic}.md"
-  local is_new_topic="false"
-  [[ -f "$dst_file" ]] || is_new_topic="true"
-
-  # Extract section to temp file
   local section_file
-  section_file=$(creg_mktemp)
-  extract_section "$src_file" "$id" > "$section_file"
+  section_file=$(creg_extract_section_temp "$src_file" "$id")
 
   remove_section "$src_file" "$id"
-
-  if [[ "$is_new_topic" == "true" ]]; then
-    cp "$section_file" "$dst_file"
-    local index="$registry/index.md"
-    [[ -f "$index" ]] && add_routing_row "$index" "$new_topic" "$dst_file"
-  else
-    insert_sorted "$dst_file" "$section_file"
-  fi
+  creg_install_section "$registry" "$new_topic" "$section_file"
 
   # Delete source if no entries remain
   local remaining
@@ -1160,8 +1134,7 @@ cmd_search() {
 
       while IFS= read -r id; do
         [[ -n "$id" ]] || continue
-        section_file=$(creg_mktemp)
-        extract_section "$f" "$id" > "$section_file"
+        section_file=$(creg_extract_section_temp "$f" "$id")
 
         if ! creg_entry_matches_tag_filters "$section_file"; then
           continue
@@ -1176,7 +1149,7 @@ cmd_search() {
         fi
         info "  ## ${id}"
         found=1
-      done < <(grep '^## ' "$f" 2>/dev/null | sed 's/^## //' || true)
+      done < <(list_entry_ids "$f")
 
     done
 
@@ -1189,14 +1162,7 @@ cmd_search() {
     fi
   }
 
-  if [[ "$ALL_FLAG" == "true" ]]; then
-    _search_one_registry "$(get_registry "false")" "project"
-    _search_one_registry "$(get_registry "true")"  "global"
-  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
-    _search_one_registry "$(get_registry "true")" "global"
-  else
-    _search_one_registry "$(get_registry "false")" "project"
-  fi
+  creg_for_each_registry _search_one_registry
 }
 
 cmd_tags() {
@@ -1220,8 +1186,7 @@ cmd_tags() {
 
       while IFS= read -r id; do
         [[ -n "$id" ]] || continue
-        section_file=$(creg_mktemp)
-        extract_section "$f" "$id" > "$section_file"
+        section_file=$(creg_extract_section_temp "$f" "$id")
         local has_tags=0
         while IFS= read -r tag; do
           [[ -n "$tag" ]] || continue
@@ -1232,7 +1197,7 @@ cmd_tags() {
           info "  ${topic}/${id}"
           untagged=$((untagged + 1))
         fi
-      done < <(grep '^## ' "$f" 2>/dev/null | sed 's/^## //' || true)
+      done < <(list_entry_ids "$f")
     done
 
     if [[ "$TAGS_UNTAGGED" == "true" ]]; then
@@ -1257,31 +1222,13 @@ cmd_tags() {
     done < <(printf '%s\n' "${!tag_counts[@]}" | sort)
   }
 
-  if [[ "$ALL_FLAG" == "true" ]]; then
-    _tags_one_registry "$(get_registry "false")" "project"
-    _tags_one_registry "$(get_registry "true")"  "global"
-  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
-    _tags_one_registry "$(get_registry "true")" "global"
-  else
-    _tags_one_registry "$(get_registry "false")" "project"
-  fi
+  creg_for_each_registry _tags_one_registry
 }
 
 cmd_upgrade_tags() {
   parse_upgrade_tags_flags "$@"
 
-  _upgrade_one_registry() {
-    creg_upgrade_tags_in_registry "$1" "$2"
-  }
-
-  if [[ "$ALL_FLAG" == "true" ]]; then
-    _upgrade_one_registry "$(get_registry "false")" "project"
-    _upgrade_one_registry "$(get_registry "true")"  "global"
-  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
-    _upgrade_one_registry "$(get_registry "true")" "global"
-  else
-    _upgrade_one_registry "$(get_registry "false")" "project"
-  fi
+  creg_for_each_registry creg_upgrade_tags_in_registry
 }
 
 cmd_show() {
@@ -1333,14 +1280,7 @@ cmd_list() {
     done
   }
 
-  if [[ "$ALL_FLAG" == "true" ]]; then
-    _list_one_registry "$(get_registry "false")" "project"
-    _list_one_registry "$(get_registry "true")"  "global"
-  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
-    _list_one_registry "$(get_registry "true")" "global"
-  else
-    _list_one_registry "$(get_registry "false")" "project"
-  fi
+  creg_for_each_registry _list_one_registry
 }
 
 cmd_validate() {
@@ -1357,17 +1297,26 @@ cmd_validate() {
 
     local errors=0
     CREG_TAG_ISSUES=0
-    # Temp file to track all ids for dedup detection
-    local id_index
-    id_index=$(creg_mktemp)
+    local -A CREG_SEEN_IDS=()
 
     _validate_tags_for_entry() {
       local entry_id="$1"
       [[ -n "$entry_id" ]] || return 0
-      local section_file
-      section_file=$(creg_mktemp)
-      extract_section "$f" "$entry_id" > "$section_file"
-      creg_validate_entry_tags "$label" "$f" "$entry_id" "$section_file"
+      creg_validate_entry_tags "$label" "$f" "$entry_id" "$(creg_extract_section_temp "$f" "$entry_id")"
+    }
+
+    _validate_entry_fields() {
+      local entry_id="$1"
+      [[ -n "$entry_id" ]] || return 0
+      if [[ "$has_intent" == "false" ]]; then
+        info "[${label}] ERROR: $(basename "$f"): entry '${entry_id}' missing 'intent:'"
+        errors=$((errors + 1))
+      fi
+      if [[ "$has_cmd" == "false" ]]; then
+        info "[${label}] ERROR: $(basename "$f"): entry '${entry_id}' missing both 'verified:' and 'template:'"
+        errors=$((errors + 1))
+      fi
+      _validate_tags_for_entry "$entry_id"
     }
 
     local f
@@ -1379,30 +1328,16 @@ cmd_validate() {
       while IFS= read -r line; do
         if [[ "$line" =~ ^##\ (.+)$ ]]; then
           local next_id="${BASH_REMATCH[1]}"
-          # Validate outgoing entry
-          if [[ -n "$current_id" ]]; then
-            if [[ "$has_intent" == "false" ]]; then
-              info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing 'intent:'"
-              errors=$((errors + 1))
-            fi
-            if [[ "$has_cmd" == "false" ]]; then
-              info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing both 'verified:' and 'template:'"
-              errors=$((errors + 1))
-            fi
-            _validate_tags_for_entry "$current_id"
-          fi
+          _validate_entry_fields "$current_id"
           current_id="$next_id"
           has_intent="false"
           has_cmd="false"
 
-          # Dedup: check id_index
-          local existing_file
-          existing_file=$(grep -F "=${current_id}=" "$id_index" 2>/dev/null | head -1 || true)
-          if [[ -n "$existing_file" ]]; then
-            info "[${label}] ERROR: duplicate id '${current_id}' in $(basename "$f") and $(basename "${existing_file%=*}")"
+          if [[ -v CREG_SEEN_IDS[$current_id] ]]; then
+            info "[${label}] ERROR: duplicate id '${current_id}' in $(basename "$f") and $(basename "${CREG_SEEN_IDS[$current_id]}")"
             errors=$((errors + 1))
           else
-            printf '%s=%s=\n' "$f" "$current_id" >> "$id_index"
+            CREG_SEEN_IDS[$current_id]="$f"
           fi
         elif [[ "$line" =~ ^intent: ]]; then
           has_intent="true"
@@ -1411,18 +1346,7 @@ cmd_validate() {
         fi
       done < "$f"
 
-      # Validate last entry in file
-      if [[ -n "$current_id" ]]; then
-        if [[ "$has_intent" == "false" ]]; then
-          info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing 'intent:'"
-          errors=$((errors + 1))
-        fi
-        if [[ "$has_cmd" == "false" ]]; then
-          info "[${label}] ERROR: $(basename "$f"): entry '${current_id}' missing both 'verified:' and 'template:'"
-          errors=$((errors + 1))
-        fi
-        _validate_tags_for_entry "$current_id"
-      fi
+      _validate_entry_fields "$current_id"
     done
 
     errors=$((errors + CREG_TAG_ISSUES))
@@ -1454,22 +1378,13 @@ cmd_validate() {
     fi
 
     if [[ "$errors" -eq 0 ]]; then
-      local total
-      total=$(wc -l < "$id_index" | tr -d ' ')
-      info "[${label}] OK — ${total} entries, no issues found"
+      info "[${label}] OK — ${#CREG_SEEN_IDS[@]} entries, no issues found"
     else
       exit_code=1
     fi
   }
 
-  if [[ "$ALL_FLAG" == "true" ]]; then
-    _validate_one_registry "$(get_registry "false")" "project"
-    _validate_one_registry "$(get_registry "true")"  "global"
-  elif [[ "$GLOBAL_FLAG" == "true" ]]; then
-    _validate_one_registry "$(get_registry "true")" "global"
-  else
-    _validate_one_registry "$(get_registry "false")" "project"
-  fi
+  creg_for_each_registry _validate_one_registry
 
   return $exit_code
 }
