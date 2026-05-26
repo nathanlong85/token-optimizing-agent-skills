@@ -65,7 +65,8 @@ check command registries (use whichever exist):
 2. Global: ~/.agents/rules/command-registry/ (or $CREG_GLOBAL_PATH if set)
 Project wins on conflicts. For each registry found:
   a. Identify the right topic file from index.md routing table.
-  b. Search (grep/rg) for the `## snake_case_id`, tags, or keyword. Read only that section.
+  b. Search (grep/rg) for the `## snake_case_id` or keyword. Read only that section.
+     For precise tag filtering: `creg search --tags tag1[,tag2]` (or `--any-tags`, `--exclude-tags`).
   c. Prefer: exact verified → adapt template → closest intent.
   d. If retrying after a failure, re-scan `anti_patterns` in the matched entry before changing command shape.
 
@@ -77,6 +78,44 @@ After a command succeeds that is not in the registry: use `creg add` to record i
 Extend existing entries. Avoid near-duplicates across topic files.
 Registry wins for command shape. Project rules win for policy.
 ```
+
+## Tag Search And Format
+
+Tags are optional lookup tokens. `creg add --tags` accepts comma- or whitespace-separated input and writes canonical list form:
+
+```markdown
+tags:
+  - docker
+  - logs
+```
+
+Legacy inline tags (`tags: docker logs`) remain readable. Normalize them with `creg upgrade-tags`.
+
+For precise tag lookup, prefer structured search over substring grep:
+
+```bash
+creg search --tags openspec,status
+creg search --any-tags docker,kubernetes
+creg search --tags deploy --exclude-tags deprecated
+creg tags --counts
+creg tags --untagged
+```
+
+## Import And Export
+
+Share or back up registry entries with the dependency-free `creg-bundle-v1` markdown format (not JSON/YAML — those are intentionally out of scope until a parser dependency is added):
+
+```bash
+creg export --output team-commands.creg.md
+creg export --topic docker --tags logs
+creg import team-commands.creg.md              # preview only
+creg import team-commands.creg.md --apply      # add new entries; block on conflicts
+creg import team-commands.creg.md --apply --merge
+creg import team-commands.creg.md --apply --overwrite
+creg import team-commands.creg.md --apply --rename-conflicts
+```
+
+Import previews by default. Use `--apply` only after reviewing the plan. Bundles use `## topic/id` headings and reuse normal entry field syntax.
 
 ## Project vs Global Classification
 

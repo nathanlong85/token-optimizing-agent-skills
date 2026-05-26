@@ -12,7 +12,8 @@
 **How to search:**
 
 1. Identify the right topic file from the Route table above.
-2. Search (grep/rg) for `## snake_case_id`, tags, or a keyword. Read only that section.
+2. Search (grep/rg) for `## snake_case_id` or a keyword. Read only that section.
+   For precise tag filtering: `creg search --tags tag1[,tag2]`.
 3. Prefer: exact `verified` → adapt `template` → closest `intent`.
 4. If retrying after a failure, re-scan `anti_patterns` in the matched entry before changing command shape.
 
@@ -35,7 +36,9 @@ Each entry in a topic file is a level-2 heading (`## snake_case_id`) followed by
 ## snake_case_id
 
 intent: One line — what this command does.
-tags: space or comma separated keywords
+tags:
+- keyword-one
+- keyword-two
 verified: Exact command that worked (omit if template alone suffices)
 template: Parameterized form with {{placeholders}} (omit if verified alone suffices)
 variants:
@@ -47,7 +50,7 @@ anti_patterns:
 **Field rules:**
 
 - `intent` — required; one line
-- `tags` — optional; space or comma separated
+- `tags` — optional; canonical list form (`tags:` followed by `- tag` bullets). Legacy inline strings remain readable.
 - `verified` — at least one of `verified` or `template` must be present
 - `template` — at least one of `verified` or `template` must be present
 - `variants` — optional; bulleted list

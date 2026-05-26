@@ -102,7 +102,7 @@ The `creg link --cursor` subcommand SHALL create a symlink from `.cursor/rules/l
 
 ### Requirement: `creg add` writes new entries with validation
 
-The `creg add <topic> <id>` subcommand SHALL accept the entry fields as named flags (`--intent`, `--tags`, `--verified`, `--template`, `--variant`, `--anti-pattern`) and write a new entry to the specified topic file. The subcommand MUST validate the entry schema, refuse duplicate `id`s across the target registry, create the topic file and update the index routing table when the topic does not yet exist, and insert the entry at its A-Z sorted position.
+The `creg add <topic> <id>` subcommand SHALL accept the entry fields as named flags (`--intent`, `--tags`, `--verified`, `--template`, `--variant`, `--anti-pattern`) and write a new entry to the specified topic file. The subcommand MUST validate the entry schema, refuse duplicate `id`s across the target registry, create the topic file and update the index routing table when the topic does not yet exist, and insert the entry at its A-Z sorted position. When `--tags` is provided, `creg add` MUST parse comma-separated and/or whitespace-separated tag input, validate each tag token, remove duplicates, and write tags using the canonical bulleted list format.
 
 #### Scenario: Add to existing topic file
 
@@ -114,6 +114,16 @@ The `creg add <topic> <id>` subcommand SHALL accept the entry fields as named fl
 - **WHEN** no `docker.md` file exists and an agent runs `creg add docker docker_compose_up ...`
 - **THEN** `docker.md` is created with the new entry, and `index.md`'s routing table gains a row pointing at `docker.md`
 
+#### Scenario: Add writes canonical tags
+
+- **WHEN** an agent runs `creg add docker docker_logs --intent "Stream logs" --tags "docker,logs debugging" --template "docker logs -f {{container}}"`
+- **THEN** the resulting entry contains `tags:` followed by bullets for `docker`, `logs`, and `debugging`
+
+#### Scenario: Invalid tag rejected
+
+- **WHEN** an agent runs `creg add docker docker_logs --intent "Stream logs" --tags "Docker Logs" --template "docker logs -f {{container}}"`
+- **THEN** the command fails with a clear message that tags must be lowercase alphanumeric hyphenated tokens
+
 #### Scenario: Multiple --anti-pattern flags accepted
 
 - **WHEN** `creg add` is invoked with `--anti-pattern "foo"` and `--anti-pattern "bar"`
@@ -121,12 +131,32 @@ The `creg add <topic> <id>` subcommand SHALL accept the entry fields as named fl
 
 ### Requirement: Read subcommands
 
-The CLI SHALL support `creg search <keyword>`, `creg show <id>`, and `creg list` for reading registry contents. `creg search` MUST match against `id`, `tags:`, `intent:`, and the contents of `verified:` / `template:` fields. `creg show <id>` MUST print exactly the matched section. All three commands SHALL accept `-g` to target the global registry and `--all` to search/list across both registries simultaneously.
+The CLI SHALL support `creg search <keyword>`, `creg show <id>`, and `creg list` for reading registry contents. `creg search` MUST match against `id`, `tags:`, `intent:`, and the contents of `verified:` / `template:` fields for keyword searches. `creg search` MUST also support `--tags <tags>` for AND tag filtering, `--any-tags <tags>` for OR tag filtering, and `--exclude-tags <tags>` for excluding entries by tag. Tag filters MUST use exact tag matches against both canonical list tags and legacy inline tags. All three commands SHALL accept `-g` to target the global registry and `--all` to search/list across both registries simultaneously.
 
 #### Scenario: Search across project and global
 
 - **WHEN** a user runs `creg search "jenkins" --all` and matching entries exist in both registries
 - **THEN** both sets of matches are printed with a header indicating which registry each match came from
+
+#### Scenario: Search requires all requested tags
+
+- **WHEN** a user runs `creg search --tags openspec,status` and only one entry has both tags
+- **THEN** only that entry is printed
+
+#### Scenario: Search matches any requested tag
+
+- **WHEN** a user runs `creg search --any-tags docker,kubernetes`
+- **THEN** entries with either `docker` or `kubernetes` are printed
+
+#### Scenario: Search excludes matching tags
+
+- **WHEN** a user runs `creg search --tags deploy --exclude-tags deprecated`
+- **THEN** entries tagged `deploy` are printed unless they are also tagged `deprecated`
+
+#### Scenario: Keyword combines with tag filter
+
+- **WHEN** a user runs `creg search --tags openspec "status"`
+- **THEN** only entries that match the `openspec` tag and the `status` keyword are printed
 
 #### Scenario: Show single entry
 
@@ -149,12 +179,27 @@ The `creg move <id> <new-topic>` subcommand SHALL move an entry from its current
 
 ### Requirement: `creg validate` checks format and consistency
 
-The `creg validate` subcommand SHALL inspect every entry in the target registry and report: missing required fields, entries with neither `verified:` nor `template:`, duplicate `id`s across topic files, topic files not listed in `index.md`'s routing table, and routing-table rows pointing at non-existent files. The subcommand MUST exit with status 0 when no issues are found and a non-zero status when issues are reported.
+The `creg validate` subcommand SHALL inspect every entry in the target registry and report: missing required fields, entries with neither `verified:` nor `template:`, duplicate `id`s across topic files, malformed tag tokens, duplicate tags within one entry, unsupported tag syntax, topic files not listed in `index.md`'s routing table, and routing-table rows pointing at non-existent files. The subcommand MUST exit with status 0 when no issues are found and a non-zero status when issues are reported. Legacy inline tag syntax MUST remain valid for compatibility, but the validator MUST report a warning that `creg upgrade-tags` can normalize it.
 
 #### Scenario: Clean registry validates
 
-- **WHEN** every entry has a valid schema, no duplicates exist, and the routing table is consistent
+- **WHEN** every entry has a valid schema, no duplicates exist, canonical tags are well-formed, and the routing table is consistent
 - **THEN** `creg validate` exits with status 0 and prints a brief confirmation
+
+#### Scenario: Duplicate tag detected
+
+- **WHEN** an entry contains the tag `docker` twice
+- **THEN** `creg validate` reports the duplicate tag and exits with non-zero status
+
+#### Scenario: Malformed tag detected
+
+- **WHEN** an entry contains a tag `Docker Logs`
+- **THEN** `creg validate` reports the malformed tag and exits with non-zero status
+
+#### Scenario: Legacy inline tag warning
+
+- **WHEN** an entry contains `tags: docker logs`
+- **THEN** `creg validate` reports a warning recommending `creg upgrade-tags` without treating the legacy syntax itself as an error
 
 #### Scenario: Drift detected
 
@@ -174,3 +219,142 @@ The `creg status` subcommand SHALL print, for both registries, whether they exis
 
 - **WHEN** the project registry exists but no global registry has been initialized
 - **THEN** `creg status` prints the project registry's path and entry count and indicates the global registry is not present
+
+### Requirement: `creg tags` inventories registry tags
+
+The `creg tags` subcommand SHALL print the tag vocabulary used by the target registry. It MUST accept `-g` to target the global registry and `--all` to include both project and global registries. It MUST support `--counts` to include per-tag usage counts and `--untagged` to list entries that do not contain any tags.
+
+#### Scenario: List tags in project registry
+
+- **WHEN** a user runs `creg tags` and the project registry contains entries tagged `docker`, `logs`, and `openspec`
+- **THEN** the command prints each distinct tag once in sorted order
+
+#### Scenario: List tag counts
+
+- **WHEN** a user runs `creg tags --counts`
+- **THEN** the command prints each distinct tag with the number of entries using that tag
+
+#### Scenario: List untagged entries
+
+- **WHEN** a user runs `creg tags --untagged`
+- **THEN** the command prints the topic/id for entries that have no tags
+
+### Requirement: `creg upgrade-tags` migrates legacy tag syntax
+
+The `creg upgrade-tags` subcommand SHALL rewrite legacy inline tag strings into the canonical bulleted tag list format. It MUST accept `-g` to target the global registry and `--all` to include both project and global registries. It MUST support `--dry-run` to report affected files and entry IDs without modifying files. Running it against a registry that already uses canonical tags MUST be a no-op.
+
+#### Scenario: Dry-run reports legacy tags
+
+- **WHEN** an entry contains `tags: docker logs` and a user runs `creg upgrade-tags --dry-run`
+- **THEN** the command reports that the entry would be rewritten and exits without modifying the registry
+
+#### Scenario: Migration rewrites inline tags
+
+- **WHEN** an entry contains `tags: docker logs` and a user runs `creg upgrade-tags`
+- **THEN** the entry is rewritten with `tags:` followed by `- docker` and `- logs`
+
+#### Scenario: Migration is idempotent
+
+- **WHEN** every tagged entry already uses canonical bulleted tags
+- **THEN** `creg upgrade-tags` exits successfully and reports that no changes were needed
+
+### Requirement: `creg export` writes portable bundles
+
+The `creg export` subcommand SHALL write registry entries in the `creg-bundle-v1` markdown bundle format. With no scope flag it MUST export the project registry. With `-g` it MUST export the global registry. With `--all` it MUST export entries from both registries and include enough source-scope metadata for readers to understand where entries came from. It MUST support `--topic <topic>`, `--id <id>`, `--tags <tags>`, `--verified-only`, and `--output <file>` filters/options. When `--output` is absent, the bundle MUST be written to stdout.
+
+#### Scenario: Export project registry to stdout
+
+- **WHEN** a user runs `creg export` in a project registry containing `docker/docker_logs`
+- **THEN** stdout contains a `creg-bundle-v1` bundle with an entry headed `## docker/docker_logs`
+
+#### Scenario: Export to file
+
+- **WHEN** a user runs `creg export --output commands.creg.md`
+- **THEN** the bundle is written to `commands.creg.md` and normal stdout contains only a compact success message
+
+#### Scenario: Export one topic
+
+- **WHEN** a user runs `creg export --topic docker`
+- **THEN** only entries from `docker.md` are included in the bundle
+
+#### Scenario: Export one id
+
+- **WHEN** a user runs `creg export --id docker_logs`
+- **THEN** only the matching entry is included in the bundle
+
+#### Scenario: Export by tags
+
+- **WHEN** a user runs `creg export --tags docker,logs`
+- **THEN** only entries matching all requested tags are included in the bundle
+
+#### Scenario: Export verified entries only
+
+- **WHEN** a user runs `creg export --verified-only`
+- **THEN** entries without a `verified:` field are omitted from the bundle
+
+### Requirement: `creg import` previews bundle imports by default
+
+The `creg import <file>` subcommand SHALL parse and validate a `creg-bundle-v1` markdown bundle, compare its entries to the target registry, and print an import plan without modifying files by default. The plan MUST classify each bundle entry as `new`, `identical`, or `conflict`. With no scope flag it MUST target the project registry. With `-g` it MUST target the global registry.
+
+#### Scenario: Import preview reports new entry
+
+- **WHEN** a bundle contains `docker/docker_logs` and the target registry has no `docker_logs` entry
+- **THEN** `creg import commands.creg.md` reports the entry as `new` and does not modify registry files
+
+#### Scenario: Import preview reports identical entry
+
+- **WHEN** a bundle contains an entry whose normalized body matches an existing target entry with the same id
+- **THEN** `creg import commands.creg.md` reports the entry as `identical` and does not modify registry files
+
+#### Scenario: Import preview reports conflict
+
+- **WHEN** a bundle contains an entry whose id exists in the target registry but whose normalized body differs
+- **THEN** `creg import commands.creg.md` reports the entry as `conflict` and does not modify registry files
+
+#### Scenario: Invalid bundle does not modify files
+
+- **WHEN** a bundle fails validation
+- **THEN** `creg import commands.creg.md` exits non-zero and leaves registry files unchanged
+
+### Requirement: `creg import --apply` writes non-conflicting entries
+
+The `creg import <file> --apply` subcommand SHALL apply the validated import plan to the target registry. Default apply behavior MUST add `new` entries, skip `identical` entries, and fail without writing if any `conflict` entry exists. Applied imports MUST create missing topic files, update `index.md` routing rows, and preserve A-Z sorting within topic files.
+
+#### Scenario: Apply imports new entry
+
+- **WHEN** a valid bundle contains a new entry `docker/docker_logs` and a user runs `creg import commands.creg.md --apply`
+- **THEN** the entry is added to `docker.md`, the routing table is updated if needed, and the command reports the added id
+
+#### Scenario: Apply skips identical entry
+
+- **WHEN** a valid bundle contains an entry identical to an existing target entry
+- **THEN** `creg import commands.creg.md --apply` skips that entry and reports it as skipped
+
+#### Scenario: Apply blocks on conflict by default
+
+- **WHEN** a valid bundle contains a conflicting entry
+- **THEN** `creg import commands.creg.md --apply` exits non-zero and does not write any imported entries
+
+### Requirement: `creg import` supports explicit conflict modes
+
+The `creg import <file> --apply` subcommand SHALL support explicit conflict modes: `--merge`, `--overwrite`, and `--rename-conflicts`. `--merge` MUST keep default apply behavior. `--overwrite` MUST replace conflicting target entries with bundle entries. `--rename-conflicts` MUST import conflicting bundle entries under deterministic new ids using an `_imported` suffix and MUST fail if the generated id already exists.
+
+#### Scenario: Merge mode skips conflicts
+
+- **WHEN** a bundle contains one new entry and one conflicting entry and a user runs `creg import commands.creg.md --apply --merge`
+- **THEN** the new entry is added, the conflicting entry is skipped, and the command reports both outcomes
+
+#### Scenario: Overwrite mode replaces conflict
+
+- **WHEN** a bundle contains a conflicting entry and a user runs `creg import commands.creg.md --apply --overwrite`
+- **THEN** the target entry with the same id is replaced by the bundle entry
+
+#### Scenario: Rename conflicts imports with suffix
+
+- **WHEN** a bundle contains conflicting `docker_logs` and no `docker_logs_imported` id exists
+- **THEN** `creg import commands.creg.md --apply --rename-conflicts` imports the bundle entry as `docker_logs_imported`
+
+#### Scenario: Rename conflict suffix collision fails
+
+- **WHEN** a bundle contains conflicting `docker_logs` and `docker_logs_imported` already exists
+- **THEN** `creg import commands.creg.md --apply --rename-conflicts` exits non-zero without modifying registry files
