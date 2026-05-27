@@ -381,6 +381,8 @@ creg_entry_matches_tag_filters() {
     [[ -n "$tag" ]] && entry_tags+=("$tag")
   done < <(creg_entry_tags_from_section_file "$section_file")
 
+  # creg_parse_tag_input clobbers the shared CREG_TAGS_ARRAY global each call;
+  # copy it immediately into a local before the next call overwrites it.
   if [[ -n "$filter_tags" ]]; then
     creg_parse_tag_input "$filter_tags"
     required=("${CREG_TAGS_ARRAY[@]}")
@@ -789,13 +791,6 @@ _creg_export_registry() {
   done
 }
 
-_export_one_registry() {
-  local registry="$1" label="$2"
-  local include_scope="false"
-  [[ "$ALL_FLAG" == "true" ]] && include_scope="true"
-  _creg_export_registry "$registry" "$label" "$include_scope"
-}
-
 cmd_export() {
   parse_export_flags "$@"
 
@@ -805,12 +800,15 @@ cmd_export() {
   {
     if [[ "$ALL_FLAG" == "true" ]]; then
       creg_render_bundle_header "all"
+      _creg_export_registry "$(get_registry "false")" "project" "true"
+      _creg_export_registry "$(get_registry "true")"  "global"  "true"
     elif [[ "$GLOBAL_FLAG" == "true" ]]; then
       creg_render_bundle_header "global"
+      _creg_export_registry "$(get_registry "true")" "global" "false"
     else
       creg_render_bundle_header "project"
+      _creg_export_registry "$(get_registry "false")" "project" "false"
     fi
-    creg_for_each_registry _export_one_registry
   } > "$sink"
 
   if [[ -n "$EXPORT_OUTPUT" ]]; then
@@ -937,6 +935,7 @@ SNIPPET_MARKER="## Command Registry"
 
 cmd_init() {
   parse_all_flag "$@"
+  [[ "$ALL_FLAG" == "true" ]] && die "'--all' is not supported for 'init'"
   local registry
   registry=$(get_registry "$GLOBAL_FLAG")
   if [[ -f "$registry/index.md" ]]; then
@@ -1075,6 +1074,7 @@ cmd_add() {
 
 cmd_move() {
   parse_all_flag "$@"
+  [[ "$ALL_FLAG" == "true" ]] && die "'--all' is not supported for 'move'"
   set -- "${REMAINING_ARGS[@]}"
   local id="${1:-}" new_topic="${2:-}"
   [[ -n "$id" ]]        || die "Usage: creg move <id> <new-topic> [-g]"
