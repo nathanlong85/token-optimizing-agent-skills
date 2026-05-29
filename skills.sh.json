@@ -1,0 +1,21 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Agent Efficiency",
+      "description": "Skills for improving the efficiency of agents.",
+      "skills": [
+        "command-registry"
+      ]
+    },
+    {
+      "title": "Onboarding",
+      "description": "Skills for onboarding a project or task before implementation.",
+      "skills": [
+        "onboard",
+        "onboard-jira"
+      ]
+    }
+  ]
+}
